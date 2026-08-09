@@ -1,0 +1,499 @@
+/* ===== APT Manager 现代主题 =====
+   基于 CSS 变量 + 窗口类切换:
+   - 默认(无类)= 跟随系统,配合 @media (prefers-color-scheme)
+   - window.theme-light / window.theme-dark 强制深浅
+   GTK 4.16+ 支持 var() 与自定义属性 */
+
+/* ---- 亮色(默认) ---- */
+window {
+  --bg: #f3f5f9;
+  --header-bg: linear-gradient(to bottom, #ffffff, #f7f9fc);
+  --header-border: rgba(0, 0, 0, 0.08);
+  --header-shadow: rgba(0, 0, 0, 0.05);
+  --nav-text: #5a6472;
+  --nav-hover-bg: rgba(60, 110, 255, 0.08);
+  --nav-hover-text: #2f4fd0;
+  --nav-checked-bg: linear-gradient(to bottom, #3d6bff, #2f54e8);
+  --nav-checked-shadow: rgba(47, 84, 232, 0.35);
+  --search-bg: #ffffff;
+  --search-border: rgba(0, 0, 0, 0.1);
+  --search-focus-border: #3d6bff;
+  --search-focus-shadow: rgba(61, 107, 255, 0.18);
+  --search-btn-text: #3d6bff;
+  --search-btn-hover: rgba(61, 107, 255, 0.12);
+  --card-bg: #ffffff;
+  --card-border: rgba(0, 0, 0, 0.06);
+  --card-hover-bg: #f0f4ff;
+  --card-hover-border: rgba(61, 107, 255, 0.25);
+  --card-hover-shadow: rgba(30, 60, 150, 0.08);
+  --card-selected-bg: linear-gradient(to bottom, #eaf0ff, #e0e9ff);
+  --pkg-name: #1b2434;
+  --pkg-summary: #6b7484;
+  --pkg-version: #8a93a3;
+  --badge-installed-bg: #e6f4ea;
+  --badge-installed-fg: #1e7e34;
+  --badge-upgradable-bg: #fff3e0;
+  --badge-upgradable-fg: #c2570a;
+  --badge-notinst-bg: #eef0f4;
+  --badge-notinst-fg: #6b7484;
+  --ghost-border: rgba(0, 0, 0, 0.15);
+  --ghost-text: #4a5464;
+  --ghost-hover-bg: rgba(0, 0, 0, 0.05);
+  --ghost-hover-border: rgba(0, 0, 0, 0.25);
+  --pager-bg: #ffffff;
+  --pager-border: rgba(0, 0, 0, 0.06);
+  --pager-text: #6b7484;
+  --pager-btn-border: rgba(0, 0, 0, 0.12);
+  --pager-btn-text: #3a4454;
+  --pager-hover-bg: rgba(61, 107, 255, 0.1);
+  --pager-hover-text: #2f54e8;
+  --detail-card-bg: #ffffff;
+  --detail-card-border: rgba(0, 0, 0, 0.07);
+  --detail-card-shadow: rgba(20, 40, 100, 0.06);
+  --detail-title: #16203a;
+  --detail-label: #8a93a3;
+  --detail-value: #2c3648;
+  --detail-desc: #3d4759;
+  --loading-text: #6b7484;
+  --dropdown-bg: rgba(0, 0, 0, 0.04);
+  --dropdown-border: rgba(0, 0, 0, 0.08);
+  --dropdown-hover-bg: rgba(61, 107, 255, 0.1);
+  --dropdown-text: #3a4454;
+  --about-bg: #ffffff;
+  --about-title: #16203a;
+  --about-row: #3d4759;
+  --op-bg: #ffffff;
+  --op-out-bg: #141824;
+  --op-out-fg: #c8d3e8;
+}
+
+/* ---- 深色(跟随系统)由 theme.rs 检测后映射到 window.theme-dark 类 ----
+   注:Deepin 的 GTK 4.18 不支持 @media (prefers-color-scheme),故移除媒体查询 */
+
+/* ---- 强制浅色 ---- */
+window.theme-light {
+  --bg: #f3f5f9;
+  --header-bg: linear-gradient(to bottom, #ffffff, #f7f9fc);
+  --header-border: rgba(0, 0, 0, 0.08);
+  --header-shadow: rgba(0, 0, 0, 0.05);
+  --nav-text: #5a6472;
+  --nav-hover-bg: rgba(60, 110, 255, 0.08);
+  --nav-hover-text: #2f4fd0;
+  --nav-checked-bg: linear-gradient(to bottom, #3d6bff, #2f54e8);
+  --nav-checked-shadow: rgba(47, 84, 232, 0.35);
+  --search-bg: #ffffff;
+  --search-border: rgba(0, 0, 0, 0.1);
+  --search-focus-border: #3d6bff;
+  --search-focus-shadow: rgba(61, 107, 255, 0.18);
+  --search-btn-text: #3d6bff;
+  --search-btn-hover: rgba(61, 107, 255, 0.12);
+  --card-bg: #ffffff;
+  --card-border: rgba(0, 0, 0, 0.06);
+  --card-hover-bg: #f0f4ff;
+  --card-hover-border: rgba(61, 107, 255, 0.25);
+  --card-hover-shadow: rgba(30, 60, 150, 0.08);
+  --card-selected-bg: linear-gradient(to bottom, #eaf0ff, #e0e9ff);
+  --pkg-name: #1b2434;
+  --pkg-summary: #6b7484;
+  --pkg-version: #8a93a3;
+  --badge-installed-bg: #e6f4ea;
+  --badge-installed-fg: #1e7e34;
+  --badge-upgradable-bg: #fff3e0;
+  --badge-upgradable-fg: #c2570a;
+  --badge-notinst-bg: #eef0f4;
+  --badge-notinst-fg: #6b7484;
+  --ghost-border: rgba(0, 0, 0, 0.15);
+  --ghost-text: #4a5464;
+  --ghost-hover-bg: rgba(0, 0, 0, 0.05);
+  --ghost-hover-border: rgba(0, 0, 0, 0.25);
+  --pager-bg: #ffffff;
+  --pager-border: rgba(0, 0, 0, 0.06);
+  --pager-text: #6b7484;
+  --pager-btn-border: rgba(0, 0, 0, 0.12);
+  --pager-btn-text: #3a4454;
+  --pager-hover-bg: rgba(61, 107, 255, 0.1);
+  --pager-hover-text: #2f54e8;
+  --detail-card-bg: #ffffff;
+  --detail-card-border: rgba(0, 0, 0, 0.07);
+  --detail-card-shadow: rgba(20, 40, 100, 0.06);
+  --detail-title: #16203a;
+  --detail-label: #8a93a3;
+  --detail-value: #2c3648;
+  --detail-desc: #3d4759;
+  --loading-text: #6b7484;
+  --dropdown-bg: rgba(0, 0, 0, 0.04);
+  --dropdown-border: rgba(0, 0, 0, 0.08);
+  --dropdown-hover-bg: rgba(61, 107, 255, 0.1);
+  --dropdown-text: #3a4454;
+  --about-bg: #ffffff;
+  --about-title: #16203a;
+  --about-row: #3d4759;
+  --op-bg: #ffffff;
+  --op-out-bg: #141824;
+  --op-out-fg: #c8d3e8;
+}
+
+/* ---- 强制深色 ---- */
+window.theme-dark {
+  --bg: #16181d;
+  --header-bg: linear-gradient(to bottom, #1d2026, #191c22);
+  --header-border: rgba(255, 255, 255, 0.07);
+  --header-shadow: rgba(0, 0, 0, 0.4);
+  --nav-text: #9aa4b5;
+  --nav-hover-bg: rgba(96, 138, 255, 0.14);
+  --nav-hover-text: #8fb0ff;
+  --nav-checked-bg: linear-gradient(to bottom, #4a78ff, #3459f0);
+  --nav-checked-shadow: rgba(52, 89, 240, 0.45);
+  --search-bg: #21242c;
+  --search-border: rgba(255, 255, 255, 0.08);
+  --search-focus-border: #4a78ff;
+  --search-focus-shadow: rgba(74, 120, 255, 0.22);
+  --search-btn-text: #8fb0ff;
+  --search-btn-hover: rgba(74, 120, 255, 0.16);
+  --card-bg: #1e2229;
+  --card-border: rgba(255, 255, 255, 0.06);
+  --card-hover-bg: #242a36;
+  --card-hover-border: rgba(96, 138, 255, 0.3);
+  --card-hover-shadow: rgba(0, 0, 0, 0.4);
+  --card-selected-bg: linear-gradient(to bottom, #26304a, #222b42);
+  --pkg-name: #e8ecf4;
+  --pkg-summary: #9aa4b5;
+  --pkg-version: #6f7a8c;
+  --badge-installed-bg: #16301f;
+  --badge-installed-fg: #4ade80;
+  --badge-upgradable-bg: #33250f;
+  --badge-upgradable-fg: #ffb74d;
+  --badge-notinst-bg: #272b34;
+  --badge-notinst-fg: #9aa4b5;
+  --ghost-border: rgba(255, 255, 255, 0.16);
+  --ghost-text: #c6cede;
+  --ghost-hover-bg: rgba(255, 255, 255, 0.07);
+  --ghost-hover-border: rgba(255, 255, 255, 0.3);
+  --pager-bg: #1a1d23;
+  --pager-border: rgba(255, 255, 255, 0.06);
+  --pager-text: #9aa4b5;
+  --pager-btn-border: rgba(255, 255, 255, 0.14);
+  --pager-btn-text: #c6cede;
+  --pager-hover-bg: rgba(74, 120, 255, 0.16);
+  --pager-hover-text: #8fb0ff;
+  --detail-card-bg: #1e2229;
+  --detail-card-border: rgba(255, 255, 255, 0.07);
+  --detail-card-shadow: rgba(0, 0, 0, 0.45);
+  --detail-title: #eef1f8;
+  --detail-label: #6f7a8c;
+  --detail-value: #cdd5e4;
+  --detail-desc: #b4bdcf;
+  --loading-text: #9aa4b5;
+  --dropdown-bg: rgba(255, 255, 255, 0.06);
+  --dropdown-border: rgba(255, 255, 255, 0.1);
+  --dropdown-hover-bg: rgba(74, 120, 255, 0.14);
+  --dropdown-text: #c6cede;
+  --about-bg: #1e2229;
+  --about-title: #eef1f8;
+  --about-row: #b4bdcf;
+  --op-bg: #1e2229;
+  --op-out-bg: #0d1017;
+  --op-out-fg: #c8d3e8;
+}
+
+/* ============ 通用样式 ============ */
+
+window {
+  background-color: var(--bg);
+}
+
+/* 顶部主工具栏 */
+headerbar {
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--header-border);
+  box-shadow: 0 1px 4px var(--header-shadow);
+  padding: 4px 8px;
+  min-height: 52px;
+}
+headerbar:backdrop {
+  background: var(--header-bg);
+}
+
+/* 导航切换按钮(三个 tab) */
+.nav-switcher button {
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 18px;
+  margin: 2px;
+  color: var(--nav-text);
+  font-weight: 600;
+  font-size: 14px;
+  transition: all 180ms ease;
+}
+.nav-switcher button:hover {
+  background: var(--nav-hover-bg);
+  color: var(--nav-hover-text);
+}
+.nav-switcher button:checked {
+  background: var(--nav-checked-bg);
+  color: #ffffff;
+  box-shadow: 0 2px 6px var(--nav-checked-shadow);
+}
+.nav-switcher button:checked:hover {
+  color: #ffffff;
+}
+
+/* 搜索区 */
+.search-bar {
+  background: var(--search-bg);
+  border: 1px solid var(--search-border);
+  border-radius: 12px;
+  padding: 2px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+.search-bar:focus-within {
+  border-color: var(--search-focus-border);
+  box-shadow: 0 0 0 3px var(--search-focus-shadow);
+}
+.search-bar entry {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  font-size: 14px;
+}
+.search-bar button {
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+  color: var(--search-btn-text);
+  font-weight: 600;
+}
+.search-bar button:hover {
+  background: var(--search-btn-hover);
+}
+
+/* 列表卡片 */
+.pkg-list {
+  background: transparent;
+}
+.pkg-list row {
+  background: var(--card-bg);
+  border-radius: 12px;
+  margin: 4px 2px;
+  padding: 6px 2px;
+  border: 1px solid var(--card-border);
+  transition: all 150ms ease;
+}
+.pkg-list row:hover {
+  background: var(--card-hover-bg);
+  border-color: var(--card-hover-border);
+  box-shadow: 0 3px 10px var(--card-hover-shadow);
+  transform: translateY(-1px);
+}
+.pkg-list row:selected {
+  background: var(--card-selected-bg);
+  border-color: var(--search-focus-border);
+}
+
+.pkg-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--pkg-name);
+}
+.pkg-summary {
+  font-size: 13px;
+  color: var(--pkg-summary);
+}
+.pkg-version {
+  font-size: 12px;
+  color: var(--pkg-version);
+  font-family: "JetBrains Mono", "Noto Sans Mono CJK SC", monospace;
+}
+
+/* 状态徽章 */
+.badge {
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.badge-installed {
+  background: var(--badge-installed-bg);
+  color: var(--badge-installed-fg);
+}
+.badge-upgradable {
+  background: var(--badge-upgradable-bg);
+  color: var(--badge-upgradable-fg);
+}
+.badge-both {
+  background: linear-gradient(to right, var(--badge-installed-bg), var(--badge-upgradable-bg));
+  color: var(--badge-upgradable-fg);
+}
+.badge-not-installed {
+  background: var(--badge-notinst-bg);
+  color: var(--badge-notinst-fg);
+}
+
+/* 操作按钮 */
+button.action-btn {
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-weight: 600;
+  font-size: 13px;
+}
+button.install-btn {
+  background: linear-gradient(to bottom, #3d6bff, #2f54e8);
+  color: white;
+  border: none;
+  box-shadow: 0 2px 5px rgba(47, 84, 232, 0.3);
+}
+button.install-btn:hover {
+  background: linear-gradient(to bottom, #4a76ff, #3a5df0);
+}
+button.update-btn {
+  background: linear-gradient(to bottom, #ff9800, #f57c00);
+  color: white;
+  border: none;
+  box-shadow: 0 2px 5px rgba(245, 124, 0, 0.3);
+}
+button.update-btn:hover {
+  background: linear-gradient(to bottom, #ffa726, #ff8f00);
+}
+button.danger-btn {
+  background: linear-gradient(to bottom, #ff5252, #e53935);
+  color: white;
+  border: none;
+  box-shadow: 0 2px 5px rgba(229, 57, 53, 0.3);
+}
+button.danger-btn:hover {
+  background: linear-gradient(to bottom, #ff6659, #ef5350);
+}
+button.ghost-btn {
+  background: transparent;
+  border: 1px solid var(--ghost-border);
+  color: var(--ghost-text);
+  border-radius: 8px;
+}
+button.ghost-btn:hover {
+  background: var(--ghost-hover-bg);
+  border-color: var(--ghost-hover-border);
+}
+
+/* 分页区 */
+.pager {
+  background: var(--pager-bg);
+  border-top: 1px solid var(--pager-border);
+  padding: 8px 16px;
+}
+.pager label {
+  color: var(--pager-text);
+  font-size: 13px;
+}
+.pager button {
+  border-radius: 8px;
+  padding: 5px 14px;
+  background: transparent;
+  border: 1px solid var(--pager-btn-border);
+  color: var(--pager-btn-text);
+  font-weight: 600;
+}
+.pager button:hover:not(:disabled) {
+  background: var(--pager-hover-bg);
+  border-color: var(--search-focus-border);
+  color: var(--pager-hover-text);
+}
+
+/* 详情页 */
+.detail-card {
+  background: var(--detail-card-bg);
+  border-radius: 16px;
+  border: 1px solid var(--detail-card-border);
+  box-shadow: 0 4px 20px var(--detail-card-shadow);
+}
+.detail-title {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--detail-title);
+}
+.detail-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--detail-label);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.detail-value {
+  font-size: 14px;
+  color: var(--detail-value);
+}
+.detail-desc {
+  font-size: 14px;
+  color: var(--detail-desc);
+  line-height: 1.6;
+}
+
+/* 加载提示 */
+.loading-box spinner {
+  color: var(--search-focus-border);
+}
+.loading-label {
+  color: var(--loading-text);
+  font-size: 14px;
+}
+
+/* 下拉框 */
+dropdown {
+  border-radius: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  background: var(--dropdown-bg);
+  border: 1px solid var(--dropdown-border);
+}
+dropdown:hover {
+  background: var(--dropdown-hover-bg);
+}
+dropdown button {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: 8px;
+  padding: 4px 8px;
+  color: var(--dropdown-text);
+  font-weight: 600;
+}
+
+/* headerbar 右侧标签(主题/语言) */
+.header-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pager-text);
+  opacity: 0.85;
+}
+
+/* 关于对话框 */
+.about-dialog {
+  background: var(--about-bg);
+  border-radius: 16px;
+  padding: 24px;
+}
+.about-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--about-title);
+}
+.about-row {
+  font-size: 14px;
+  color: var(--about-row);
+}
+
+/* 操作进度对话框 */
+.op-dialog {
+  background: var(--op-bg);
+  border-radius: 16px;
+  padding: 20px;
+  min-width: 480px;
+}
+.op-output {
+  background: var(--op-out-bg);
+  color: var(--op-out-fg);
+  border-radius: 10px;
+  font-family: "JetBrains Mono", "Noto Sans Mono CJK SC", monospace;
+  font-size: 12.5px;
+  padding: 10px;
+}
