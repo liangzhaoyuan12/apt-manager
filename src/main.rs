@@ -10,9 +10,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use gtk::gio;
 use gtk::prelude::*;
 use gtk::{
-    Application, ApplicationWindow, Box, Button, ComboBoxText, HeaderBar, Stack,
+    Application, ApplicationWindow, Box, HeaderBar, MenuButton, PopoverMenu, Stack,
     StackTransitionType, ToggleButton,
 };
 
@@ -197,58 +198,47 @@ fn build_window(app: &Application, worker: Arc<AptWorker>, config: Config) {
     }
     nav_btns[1].set_active(true);
 
-    // ---- 右侧:主题 / 语言 / 关于 ----
-    let theme_dd = ComboBoxText::new();
-    for name in [
-        i18n::theme_self_name(ThemePref::System),
-        i18n::theme_self_name(ThemePref::Light),
-        i18n::theme_self_name(ThemePref::Dark),
+    // ---- 右侧:主题 / 语言 / 关于 合并为单个菜单 ----
+    let menu_root = gio::Menu::new();
+
+    // 主题组(单选)
+    let theme_items = gio::Menu::new();
+    for (label, target) in [
+        (i18n::theme_self_name(ThemePref::System), "system"),
+        (i18n::theme_self_name(ThemePref::Light), "light"),
+        (i18n::theme_self_name(ThemePref::Dark), "dark"),
     ] {
-        theme_dd.append_text(&name);
+        let item = gio::MenuItem::new(Some(label), None);
+        let target = glib::Variant::from(target);
+        item.set_action_and_target_value(Some("win.theme"), Some(&target));
+        theme_items.append_item(&item);
     }
-    theme_dd.set_active(Some(match config.theme {
-        ThemePref::System => 0,
-        ThemePref::Light => 1,
-        ThemePref::Dark => 2,
-    }));
-    theme_dd.set_tooltip_text(Some(tr!("theme")));
+    menu_root.append_section(Some(tr!("theme")), &theme_items);
 
-    let lang_dd = ComboBoxText::new();
-    for name in [
-        i18n::lang_self_name(LangPref::System),
-        i18n::lang_self_name(LangPref::Zh),
-        i18n::lang_self_name(LangPref::En),
+    // 语言组(单选)
+    let lang_items = gio::Menu::new();
+    for (label, target) in [
+        (i18n::lang_self_name(LangPref::System), "system"),
+        (i18n::lang_self_name(LangPref::Zh), "zh"),
+        (i18n::lang_self_name(LangPref::En), "en"),
     ] {
-        lang_dd.append_text(&name);
+        let item = gio::MenuItem::new(Some(label), None);
+        let target = glib::Variant::from(target);
+        item.set_action_and_target_value(Some("win.lang"), Some(&target));
+        lang_items.append_item(&item);
     }
-    lang_dd.set_active(Some(match config.language {
-        LangPref::System => 0,
-        LangPref::Zh => 1,
-        LangPref::En => 2,
-    }));
-    lang_dd.set_tooltip_text(Some(tr!("language")));
+    menu_root.append_section(Some(tr!("language")), &lang_items);
 
-    let about_btn = Button::new();
-    about_btn.set_icon_name("help-about-symbolic");
-    about_btn.set_tooltip_text(Some(tr!("about")));
+    // 关于
+    menu_root.append(Some(tr!("about")), Some("win.about"));
 
-    // 主题选择:标签 + 下拉
-    let theme_label = gtk::Label::new(Some(tr!("theme")));
-    theme_label.add_css_class("header-label");
-    let theme_box = Box::new(gtk::Orientation::Horizontal, 4);
-    theme_box.append(&theme_label);
-    theme_box.append(&theme_dd);
-
-    // 语言选择:标签 + 下拉
-    let lang_label = gtk::Label::new(Some(tr!("language")));
-    lang_label.add_css_class("header-label");
-    let lang_box = Box::new(gtk::Orientation::Horizontal, 4);
-    lang_box.append(&lang_label);
-    lang_box.append(&lang_dd);
-
-    header.pack_end(&about_btn);
-    header.pack_end(&lang_box);
-    header.pack_end(&theme_box);
+    let popover = PopoverMenu::from_model(Some(&menu_root));
+    let menu_btn = MenuButton::builder()
+        .icon_name("open-menu-symbolic")
+        .popover(&popover)
+        .build();
+    menu_btn.set_tooltip_text(Some(tr!("menu")));
+    header.pack_end(&menu_btn);
 
     // ---- 组装 state ----
     let state = Rc::new(RefCell::new(AppState {
@@ -291,9 +281,9 @@ fn build_window(app: &Application, worker: Arc<AptWorker>, config: Config) {
         }
     }
 
-    // ---- 事件处理(主循环 idle 轮询)----
+    // ---- 事件处理(主循环 timeout 轮询,避免 idle 持续 Continue 忙转吃满 CPU)----
     let st = state.clone();
-    glib::idle_add_local(move || {
+    glib::timeout_add_local(std::time::Duration::from_millis(40), move || {
         while let Ok(ev) = ev_rx.try_recv() {
             let st = st.clone();
             handle_event(&st, ev);
@@ -301,56 +291,89 @@ fn build_window(app: &Application, worker: Arc<AptWorker>, config: Config) {
         glib::ControlFlow::Continue
     });
 
-    // ---- 关于按钮 ----
-    let st = state.clone();
-    about_btn.connect_clicked(move |_| {
-        let s = st.borrow();
-        let win = s.window.clone();
-        dialogs::show_about(&win);
-    });
+    // ---- 菜单动作:关于 / 主题 / 语言 ----
+    // 关于
+    let about_action = gio::SimpleAction::new("about", None);
+    {
+        let st = state.clone();
+        about_action.connect_activate(move |_, _| {
+            let s = st.borrow();
+            let win = s.window.clone();
+            dialogs::show_about(&win);
+        });
+    }
+    window.add_action(&about_action);
 
-    // ---- 主题切换 ----
-    let st = state.clone();
-    theme_dd.connect_active_notify(move |dd| {
-        let pref = match dd.active().unwrap_or(0) {
-            1 => ThemePref::Light,
-            2 => ThemePref::Dark,
-            _ => ThemePref::System,
-        };
-        let win = st.borrow().window.clone();
-        theme::apply_theme(pref, &win);
-        let mut s = st.borrow_mut();
-        s.config.theme = pref;
-        s.config.save();
-    });
+    // 主题(stateful action,state 即当前选中值,radio 菜单据此打勾)
+    let theme_action = gio::SimpleAction::new_stateful(
+        "theme",
+        Some(&glib::VariantTy::STRING),
+        &glib::Variant::from(match state.borrow().config.theme {
+            ThemePref::System => "system",
+            ThemePref::Light => "light",
+            ThemePref::Dark => "dark",
+        }),
+    );
+    {
+        let st = state.clone();
+        theme_action.connect_change_state(move |a, v| {
+            let Some(v) = v else { return };
+            a.set_state(v);
+            let pref = match v.str() {
+                Some("light") => ThemePref::Light,
+                Some("dark") => ThemePref::Dark,
+                _ => ThemePref::System,
+            };
+            let win = st.borrow().window.clone();
+            theme::apply_theme(pref, &win);
+            let mut s = st.borrow_mut();
+            s.config.theme = pref;
+            s.config.save();
+        });
+    }
+    window.add_action(&theme_action);
 
-    // ---- 语言切换:保存配置 + 重建界面 ----
-    let app = app.clone();
-    let worker = state.borrow().worker.clone();
-    let state2 = state.clone();
-    lang_dd.connect_active_notify(move |dd| {
-        let pref = match dd.active().unwrap_or(0) {
-            1 => LangPref::Zh,
-            2 => LangPref::En,
-            _ => LangPref::System,
-        };
-        let theme = state2.borrow().config.theme;
-        let cfg = Config {
-            theme,
-            language: pref,
-        };
-        cfg.save();
-        i18n::set_lang(pref);
-        // 关闭旧窗口并重建
-        let win: Option<gtk::Window> = {
-            let s = state2.borrow();
-            Some(s.window.clone().upcast::<gtk::Window>())
-        };
-        if let Some(win) = win {
-            win.close();
-        }
-        build_window(&app, worker.clone(), cfg);
-    });
+    // 语言:保存配置 + 重建界面
+    let lang_action = gio::SimpleAction::new_stateful(
+        "lang",
+        Some(&glib::VariantTy::STRING),
+        &glib::Variant::from(match state.borrow().config.language {
+            LangPref::System => "system",
+            LangPref::Zh => "zh",
+            LangPref::En => "en",
+        }),
+    );
+    {
+        let app = app.clone();
+        let state2 = state.clone();
+        lang_action.connect_change_state(move |a, v| {
+            let Some(v) = v else { return };
+            a.set_state(v);
+            let pref = match v.str() {
+                Some("zh") => LangPref::Zh,
+                Some("en") => LangPref::En,
+                _ => LangPref::System,
+            };
+            let theme = state2.borrow().config.theme;
+            let cfg = Config {
+                theme,
+                language: pref,
+            };
+            cfg.save();
+            i18n::set_lang(pref);
+            // 关闭旧窗口并重建
+            let win: Option<gtk::Window> = {
+                let s = state2.borrow();
+                Some(s.window.clone().upcast::<gtk::Window>())
+            };
+            if let Some(win) = win {
+                win.close();
+            }
+            let worker = state2.borrow().worker.clone();
+            build_window(&app, worker, cfg);
+        });
+    }
+    window.add_action(&lang_action);
 
     // ---- 启动时加载快照 ----
     let st = state.clone();

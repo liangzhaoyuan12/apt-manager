@@ -11,10 +11,11 @@ window {
   --header-border: rgba(0, 0, 0, 0.08);
   --header-shadow: rgba(0, 0, 0, 0.05);
   --nav-text: #5a6472;
-  --nav-hover-bg: rgba(60, 110, 255, 0.08);
-  --nav-hover-text: #2f4fd0;
-  --nav-checked-bg: linear-gradient(to bottom, #3d6bff, #2f54e8);
-  --nav-checked-shadow: rgba(47, 84, 232, 0.35);
+  --nav-hover-bg: rgba(0, 0, 0, 0.06);
+  --nav-hover-text: #3a4454;
+  --nav-checked-bg: rgba(53, 132, 228, 0.15);
+  --nav-checked-text: #3584e4;
+  --nav-checked-shadow: transparent;
   --search-bg: #ffffff;
   --search-border: rgba(0, 0, 0, 0.1);
   --search-focus-border: #3d6bff;
@@ -65,6 +66,10 @@ window {
   --op-bg: #ffffff;
   --op-out-bg: #141824;
   --op-out-fg: #c8d3e8;
+  --accent: #3584e4;
+  --accent-hover: #2a76d5;
+  --destructive: #c01c28;
+  --destructive-hover: #a51822;
 }
 
 /* ---- 深色(跟随系统)由 theme.rs 检测后映射到 window.theme-dark 类 ----
@@ -77,10 +82,11 @@ window.theme-light {
   --header-border: rgba(0, 0, 0, 0.08);
   --header-shadow: rgba(0, 0, 0, 0.05);
   --nav-text: #5a6472;
-  --nav-hover-bg: rgba(60, 110, 255, 0.08);
-  --nav-hover-text: #2f4fd0;
-  --nav-checked-bg: linear-gradient(to bottom, #3d6bff, #2f54e8);
-  --nav-checked-shadow: rgba(47, 84, 232, 0.35);
+  --nav-hover-bg: rgba(0, 0, 0, 0.06);
+  --nav-hover-text: #3a4454;
+  --nav-checked-bg: rgba(53, 132, 228, 0.15);
+  --nav-checked-text: #3584e4;
+  --nav-checked-shadow: transparent;
   --search-bg: #ffffff;
   --search-border: rgba(0, 0, 0, 0.1);
   --search-focus-border: #3d6bff;
@@ -131,6 +137,10 @@ window.theme-light {
   --op-bg: #ffffff;
   --op-out-bg: #141824;
   --op-out-fg: #c8d3e8;
+  --accent: #3584e4;
+  --accent-hover: #2a76d5;
+  --destructive: #c01c28;
+  --destructive-hover: #a51822;
 }
 
 /* ---- 强制深色 ---- */
@@ -140,10 +150,11 @@ window.theme-dark {
   --header-border: rgba(255, 255, 255, 0.07);
   --header-shadow: rgba(0, 0, 0, 0.4);
   --nav-text: #9aa4b5;
-  --nav-hover-bg: rgba(96, 138, 255, 0.14);
-  --nav-hover-text: #8fb0ff;
-  --nav-checked-bg: linear-gradient(to bottom, #4a78ff, #3459f0);
-  --nav-checked-shadow: rgba(52, 89, 240, 0.45);
+  --nav-hover-bg: rgba(255, 255, 255, 0.07);
+  --nav-hover-text: #cdd5e4;
+  --nav-checked-bg: rgba(98, 160, 234, 0.26);
+  --nav-checked-text: #62a0ea;
+  --nav-checked-shadow: transparent;
   --search-bg: #21242c;
   --search-border: rgba(255, 255, 255, 0.08);
   --search-focus-border: #4a78ff;
@@ -194,6 +205,10 @@ window.theme-dark {
   --op-bg: #1e2229;
   --op-out-bg: #0d1017;
   --op-out-fg: #c8d3e8;
+  --accent: #62a0ea;
+  --accent-hover: #7ab2f0;
+  --destructive: #f66151;
+  --destructive-hover: #ff8275;
 }
 
 /* ============ 通用样式 ============ */
@@ -232,11 +247,12 @@ headerbar:backdrop {
 }
 .nav-switcher button:checked {
   background: var(--nav-checked-bg);
-  color: #ffffff;
-  box-shadow: 0 2px 6px var(--nav-checked-shadow);
+  color: var(--nav-checked-text);
+  box-shadow: none;
 }
 .nav-switcher button:checked:hover {
-  color: #ffffff;
+  background: var(--nav-checked-bg);
+  color: var(--nav-checked-text);
 }
 
 /* 搜索区 */
@@ -337,32 +353,27 @@ button.action-btn {
   font-weight: 600;
   font-size: 13px;
 }
-button.install-btn {
-  background: linear-gradient(to bottom, #3d6bff, #2f54e8);
-  color: white;
-  border: none;
-  box-shadow: 0 2px 5px rgba(47, 84, 232, 0.3);
-}
-button.install-btn:hover {
-  background: linear-gradient(to bottom, #4a76ff, #3a5df0);
-}
+button.install-btn,
 button.update-btn {
-  background: linear-gradient(to bottom, #ff9800, #f57c00);
-  color: white;
+  background: var(--accent);
+  color: #ffffff;
   border: none;
-  box-shadow: 0 2px 5px rgba(245, 124, 0, 0.3);
+  border-radius: 8px;
+  box-shadow: none;
 }
+button.install-btn:hover,
 button.update-btn:hover {
-  background: linear-gradient(to bottom, #ffa726, #ff8f00);
+  background: var(--accent-hover);
 }
 button.danger-btn {
-  background: linear-gradient(to bottom, #ff5252, #e53935);
-  color: white;
+  background: var(--destructive);
+  color: #ffffff;
   border: none;
-  box-shadow: 0 2px 5px rgba(229, 57, 53, 0.3);
+  border-radius: 8px;
+  box-shadow: none;
 }
 button.danger-btn:hover {
-  background: linear-gradient(to bottom, #ff6659, #ef5350);
+  background: var(--destructive-hover);
 }
 button.ghost-btn {
   background: transparent;
@@ -402,14 +413,24 @@ button.ghost-btn:hover {
 /* 详情页 */
 .detail-card {
   background: var(--detail-card-bg);
-  border-radius: 16px;
+  border-radius: 18px;
   border: 1px solid var(--detail-card-border);
-  box-shadow: 0 4px 20px var(--detail-card-shadow);
+  box-shadow: 0 6px 24px var(--detail-card-shadow);
+}
+.detail-card separator {
+  background: var(--detail-card-border);
+  min-height: 1px;
+  margin: 4px 0;
 }
 .detail-title {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 800;
   color: var(--detail-title);
+}
+.detail-version {
+  font-size: 13px;
+  font-family: "JetBrains Mono", "Noto Sans Mono CJK SC", monospace;
+  color: var(--detail-label);
 }
 .detail-label {
   font-size: 12px;
@@ -456,14 +477,6 @@ dropdown button {
   padding: 4px 8px;
   color: var(--dropdown-text);
   font-weight: 600;
-}
-
-/* headerbar 右侧标签(主题/语言) */
-.header-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--pager-text);
-  opacity: 0.85;
 }
 
 /* 关于对话框 */

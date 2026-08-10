@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk::prelude::*;
-use gtk::{Align, Box, Button, Label, Orientation, ScrolledWindow, Widget};
+use gtk::{Align, Box, Button, Label, Orientation, ScrolledWindow, Separator, Widget};
 
 use crate::apt_worker::PkgDetail;
 use crate::i18n;
@@ -51,7 +51,7 @@ impl DetailPage {
         root.append(&top);
 
         // ---- 内容卡片 ----
-        let card = Box::new(Orientation::Vertical, 10);
+        let card = Box::new(Orientation::Vertical, 12);
         card.add_css_class("detail-card");
         card.set_margin_top(4);
         card.set_margin_bottom(12);
@@ -70,23 +70,33 @@ impl DetailPage {
         title_row.append(&badge);
         card.append(&title_row);
 
-        // 版本
-        let version_value = detail_row(&card, "detail_version");
+        // 版本(hero 副标题)
+        let version_value = Label::new(None);
+        version_value.add_css_class("detail-version");
+        version_value.set_xalign(0.0);
+        version_value.set_selectable(true);
+        card.append(&version_value);
 
-        // 分类
-        let section_value = detail_row(&card, "detail_section");
+        // 信息两列:分类 | 大小(铺满卡片宽,两列平分)
+        let info2 = Box::new(Orientation::Horizontal, 20);
+        info2.set_margin_top(6);
+        info2.set_hexpand(true);
+        let section_value = detail_row(&info2, "detail_section");
+        let size_value = detail_row(&info2, "detail_size");
+        card.append(&info2);
 
-        // 大小
-        let size_value = detail_row(&card, "detail_size");
-
-        // 简介
+        // 简介(自动换行)
         let summary_value = detail_row(&card, "detail_summary");
+        summary_value.set_wrap(true);
+
+        // 分区线
+        card.append(&Separator::new(Orientation::Horizontal));
 
         // 详细描述
         let desc_label = Label::new(Some(i18n::t("detail_description")));
         desc_label.add_css_class("detail-label");
         desc_label.set_xalign(0.0);
-        desc_label.set_margin_top(6);
+        desc_label.set_margin_top(4);
         card.append(&desc_label);
 
         let desc_value = Label::new(None);
@@ -99,6 +109,7 @@ impl DetailPage {
         let desc_scroll = ScrolledWindow::new();
         desc_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
         desc_scroll.set_child(Some(&desc_value));
+        desc_scroll.set_hexpand(true);
         desc_scroll.set_vexpand(true);
         desc_scroll.set_max_content_height(220);
         card.append(&desc_scroll);
@@ -229,10 +240,11 @@ pub fn format_size(size: u64) -> String {
     }
 }
 
-/// 创建一行 "标签: 值" 并返回值 Label
-fn detail_row(card: &Box, key: &str) -> Label {
-    let row = Box::new(Orientation::Horizontal, 8);
-    row.set_halign(Align::Start);
+/// 创建一行 "标签: 值"(行占满容器宽度,便于两列并排平分)并返回值 Label
+fn detail_row(container: &Box, key: &str) -> Label {
+    let row = Box::new(Orientation::Horizontal, 10);
+    // 注意:不能设 halign Start —— 非 Fill 时 Box 只分配自然宽,hexpand 失效
+    row.set_hexpand(true);
 
     let label = Label::new(Some(i18n::t(key)));
     label.add_css_class("detail-label");
@@ -246,7 +258,7 @@ fn detail_row(card: &Box, key: &str) -> Label {
 
     row.append(&label);
     row.append(&value);
-    card.append(&row);
+    container.append(&row);
     value
 }
 
