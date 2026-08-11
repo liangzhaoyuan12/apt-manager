@@ -46,6 +46,7 @@ impl PkgListPage {
         on_open_detail: impl Fn(&str) + 'static,
         on_action: Option<std::boxed::Box<dyn Fn()>>,
         on_check: Option<std::boxed::Box<dyn Fn()>>,
+        on_refresh: Option<std::boxed::Box<dyn Fn()>>,
     ) -> Rc<RefCell<Self>> {
         let page_size = 50;
 
@@ -77,6 +78,19 @@ impl PkgListPage {
         let action_btn = Button::new();
         let check_btn = Button::new();
         check_btn.set_visible(mode == Mode::Upgradable);
+
+        // 刷新按钮:仅在传入 on_refresh 回调时显示(目前用于已安装页)
+        let refresh_btn = Button::new();
+        match on_refresh {
+            Some(cb) => {
+                refresh_btn.set_label(i18n::t("refresh"));
+                refresh_btn.add_css_class("ghost-btn");
+                refresh_btn.connect_clicked(move |_| cb());
+            }
+            None => {
+                refresh_btn.set_visible(false);
+            }
+        }
         match mode {
             Mode::All => {
                 action_btn.set_label(i18n::t("update_sources"));
@@ -108,6 +122,7 @@ impl PkgListPage {
         }
 
         top.append(&search_box);
+        top.append(&refresh_btn);
         top.append(&check_btn);
         top.append(&action_btn);
         root.append(&top);

@@ -97,21 +97,37 @@ impl AptWorker {
 }
 
 fn worker_loop(rx: Receiver<Req>) {
-    let cache: Cache = match new_cache!() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("apt cache open failed: {e:?}");
-            return;
-        }
-    };
+    // cache 惰性创建;每次 Snapshot 都重建,否则 apt-get 卸载/安装/update 后
+    // 内存 cache 仍是旧状态,列表刷新拿到的是过期数据。
+    let mut cache: Option<Cache> = None;
     while let Ok(req) = rx.recv() {
         match req {
             Req::Snapshot(reply) => {
-                let snap = build_snapshot(&cache);
-                let _ = reply.send(snap);
+                match new_cache!() {
+                    Ok(c) => {
+                        let snap = build_snapshot(&c);
+                        cache = Some(c);
+                        let _ = reply.send(snap);
+                    }
+                    Err(e) => {
+                        eprintln!("apt cache rebuild failed: {e:?}");
+                        let _ = reply.send(Vec::new());
+                    }
+                }
             }
             Req::Detail { name, reply } => {
-                let detail = build_detail(&cache, &name);
+                if cache.is_none() {
+                    match new_cache!() {
+                        Ok(c) => cache = Some(c),
+                        Err(e) => {
+                            eprintln!("apt cache open failed: {e:?}");
+                            let _ = reply.send(None);
+                            continue;
+                        }
+                    }
+                }
+                let c = cache.as_ref().expect("cache initialized above");
+                let detail = build_detail(c, &name);
                 let _ = reply.send(detail);
             }
         }
@@ -203,7 +219,7 @@ pub fn run_apt_op(
                     }
                 };
                 // 统一输出行通道(stdout/stderr 各自线程读)
-                let (line_tx, mut line_rx) = tokio::sync::mpsc::channel::<String>(256);
+                let (line_tx, line_rx) = tokio::sync::mpsc::channel::<String>(256);
                 if let Some(stdout) = child.stdout.take() {
                     let tx = line_tx.clone();
                     tokio::spawn(async move {
@@ -217,29 +233,42 @@ pub fn run_apt_op(
                     });
                 }
                 drop(line_tx);
-                loop {
-                    tokio::select! {
-                        line = line_rx.recv() => {
-                            match line {
-                                Some(l) => on_line(l),
-                                None => { /* 所有输出结束,继续等子进程退出 */ }
-                            }
-                        }
-                        status = child.wait() => {
-                            match status {
-                                Ok(s) => on_done(s.success()),
-                                Err(e) => {
-                                    on_line(format!("wait failed: {e}"));
-                                    on_done(false);
-                                }
-                            }
-                            break;
-                        }
+                // 等待退出并转发输出。输出 EOF 后停止轮询 line 分支,
+                // 否则输出结束但子进程未退出时 recv() 立即返回 None,select 无
+                // await 点无限空转,占满一个 CPU 核(窗口关闭也无法终止它)。
+                let status = await_child_output(&mut child, line_rx, &on_line).await;
+                match status {
+                    Ok(s) => on_done(s.success()),
+                    Err(e) => {
+                        on_line(format!("wait failed: {e}"));
+                        on_done(false);
                     }
                 }
             });
         })
         .expect("failed to spawn apt-op thread");
+}
+
+/// 等待子进程退出,同时把 stdout/stderr 行转发给 on_line。
+/// 关键:输出流全部关闭后(EOF,line_rx 所有 sender drop)不再 poll line_rx,
+/// 否则 recv() 每次立即返回 None,tokio::select! 会忙转占满一个核。
+async fn await_child_output(
+    child: &mut tokio::process::Child,
+    mut line_rx: tokio::sync::mpsc::Receiver<String>,
+    on_line: &(dyn Fn(String) + Send),
+) -> std::io::Result<std::process::ExitStatus> {
+    let mut output_closed = false;
+    loop {
+        tokio::select! {
+            line = line_rx.recv(), if !output_closed => {
+                match line {
+                    Some(l) => on_line(l),
+                    None => output_closed = true,
+                }
+            }
+            status = child.wait() => return status,
+        }
+    }
 }
 
 async fn read_lines<R: tokio::io::AsyncRead + Unpin>(

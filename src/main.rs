@@ -33,6 +33,7 @@ enum UiEvent {
     ActionAutoRemove,
     ActionUpgradeAll,
     ActionCheckUpdates,
+    ActionRefresh,
 }
 
 /// 共享应用状态
@@ -103,6 +104,7 @@ fn build_window(app: &Application, worker: Arc<AptWorker>, config: Config) {
             }))
         },
         None,
+        None,
     );
 
     let ev = ev_tx.clone();
@@ -118,6 +120,12 @@ fn build_window(app: &Application, worker: Arc<AptWorker>, config: Config) {
             }))
         },
         None,
+        {
+            let ev = ev_tx.clone();
+            Some(std::boxed::Box::new(move || {
+                let _ = ev.send(UiEvent::ActionRefresh);
+            }))
+        },
     );
 
     let ev = ev_tx.clone();
@@ -138,6 +146,7 @@ fn build_window(app: &Application, worker: Arc<AptWorker>, config: Config) {
                 let _ = ev.send(UiEvent::ActionCheckUpdates);
             }))
         },
+        None,
     );
 
     // ---- 详情页 ----
@@ -282,11 +291,18 @@ fn build_window(app: &Application, worker: Arc<AptWorker>, config: Config) {
     }
 
     // ---- 事件处理(主循环 timeout 轮询,避免 idle 持续 Continue 忙转吃满 CPU)----
+    // 所有 ev_tx 发送方随窗口/页面销毁后,通道断开即停止本源,避免永久泄漏
     let st = state.clone();
     glib::timeout_add_local(std::time::Duration::from_millis(40), move || {
-        while let Ok(ev) = ev_rx.try_recv() {
-            let st = st.clone();
-            handle_event(&st, ev);
+        loop {
+            match ev_rx.try_recv() {
+                Ok(ev) => {
+                    let st = st.clone();
+                    handle_event(&st, ev);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return glib::ControlFlow::Break,
+            }
         }
         glib::ControlFlow::Continue
     });
@@ -531,6 +547,10 @@ fn handle_event(state: &Rc<RefCell<AppState>>, ev: UiEvent) {
                     });
                 },
             );
+        }
+        // 手动刷新列表(已安装页刷新按钮)
+        UiEvent::ActionRefresh => {
+            refresh_all(state);
         }
     }
 }

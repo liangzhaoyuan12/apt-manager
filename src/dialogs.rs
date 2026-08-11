@@ -1,5 +1,8 @@
 // GTK 4.10+ Dialog 标记弃用,但 AlertDialog 不适合流式输出场景,此处保留使用
 #![allow(deprecated)]
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use gtk::prelude::*;
 use gtk::{
     Align, ApplicationWindow, Box, Button, Dialog, Label, Orientation, ScrolledWindow, Spinner,
@@ -170,22 +173,31 @@ pub fn run_op_dialog(
     let args = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     run_apt_op(args, on_line, on_done);
 
+    // 操作结束标志:done 源置位后,输出源再 drain 一次即停止,
+    // 避免每次操作都永久泄漏一个 40ms 轮询源
+    let done_flag = Arc::new(AtomicBool::new(false));
+
     // 主循环轮询输出行
     let buf = buffer.clone();
+    let df = done_flag.clone();
     glib::timeout_add_local(std::time::Duration::from_millis(40), move || {
-        let mut any = false;
+        if df.load(Ordering::Relaxed) {
+            // 操作已结束:drain 剩余行后停止本源
+            while let Ok(line) = line_rx.try_recv() {
+                let mut end = buf.end_iter();
+                buf.insert(&mut end, &format!("{line}\n"));
+            }
+            return glib::ControlFlow::Break;
+        }
         while let Ok(line) = line_rx.try_recv() {
             let mut end = buf.end_iter();
             buf.insert(&mut end, &format!("{line}\n"));
-            any = true;
-        }
-        if any {
-            // 滚动到底部
         }
         glib::ControlFlow::Continue
     });
 
     // 主循环轮询完成状态
+    let df = done_flag.clone();
     let status = status.clone();
     let spinner = spinner.clone();
     let close_btn = close_btn.clone();
@@ -193,6 +205,7 @@ pub fn run_op_dialog(
     glib::timeout_add_local(std::time::Duration::from_millis(40), move || {
         match done_rx.try_recv() {
             Ok(ok) => {
+                df.store(true, Ordering::Relaxed);
                 spinner.stop();
                 if ok {
                     status.set_text(i18n::t("op_done"));
