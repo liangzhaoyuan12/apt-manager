@@ -50,8 +50,11 @@ trap 'rm -rf "$STAGE"' EXIT
 install -Dm755 "$BIN_PATH" "$STAGE/usr/bin/$PKG_NAME"
 
 # 2.2 .desktop 入口
+# 注意:文件名必须是可执行文件同名(apt-manager.desktop)——deepin dock 通过
+# AM.Identify 按进程名得到 desktop id,再按文件名找 desktop 文件;用反向域名
+# 文件名会导致 dock 匹配不到图标(菜单正常、dock 空白)。
 mkdir -p "$STAGE/usr/share/applications" "$STAGE/DEBIAN"
-cat > "$STAGE/usr/share/applications/$APP_ID.desktop" <<EOF
+cat > "$STAGE/usr/share/applications/$PKG_NAME.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Apt Manager
@@ -60,12 +63,17 @@ GenericName=Package Manager
 GenericName[zh_CN]=软件包管理器
 Comment=$DESC_SHORT
 Comment[zh_CN]=$DESC_SHORT
-Exec=$PKG_NAME
+# Exec 必须带 %U:没有该占位符时,应用管理器(文件管理器打开方式)不会传文件参数
+Exec=$PKG_NAME %U
 Icon=$APP_ID
 Terminal=false
 Categories=System;PackageManager;Utility;
 Keywords=apt;dpkg;package;install;update;
 StartupNotify=true
+# 窗口 WM_CLASS 是二进制名,dock 按它归组显示图标
+StartupWMClass=$PKG_NAME
+# 作为 .deb 文件打开方式(双击 deb 用 apt-manager 安装)
+MimeType=application/vnd.debian.binary-package;
 EOF
 
 # 2.3 应用图标 (从项目根目录 icon.png,512x512)
@@ -89,6 +97,14 @@ Depends: libgtk-4-1 (>= 4.6), libpango-1.0-0, libglib2.0-0, libc6, apt, dpkg, su
 Description: $DESC_SHORT
  $DESC_LONG
 EOF
+
+# 2.5 升级/卸载时清理旧版遗留的反向域名 desktop 文件(0.3.0 及以前)
+cat > "$STAGE/DEBIAN/prerm" <<EOF
+#!/bin/sh
+rm -f /usr/share/applications/com.liangzhaoyuan12.aptmanager.desktop
+exit 0
+EOF
+chmod 755 "$STAGE/DEBIAN/prerm"
 
 # ---------- 3. 打包 ----------
 mkdir -p "$DIST_DIR"

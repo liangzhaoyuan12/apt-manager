@@ -53,7 +53,7 @@ impl DetailPage {
     ) -> Rc<RefCell<Self>> {
         let root = Box::new(Orientation::Vertical, 0);
 
-        // ---- 顶栏:返回按钮(固定不滚动)----
+        // ---- 顶栏:返回按钮(左)+ 操作按钮(右对齐)----
         let top = Box::new(Orientation::Horizontal, 8);
         top.set_margin_top(10);
         top.set_margin_bottom(4);
@@ -65,10 +65,23 @@ impl DetailPage {
         back_btn.connect_clicked(move |_| on_back());
         top.append(&back_btn);
 
-        // 返回按钮后留白
+        // 返回按钮后留白,操作按钮靠右
         let spacer = Box::new(Orientation::Horizontal, 0);
         spacer.set_hexpand(true);
         top.append(&spacer);
+
+        let install_btn = Button::with_label(i18n::t("install"));
+        install_btn.add_css_class("install-btn");
+
+        let update_btn = Button::with_label(i18n::t("update"));
+        update_btn.add_css_class("update-btn");
+
+        let remove_btn = Button::with_label(i18n::t("uninstall"));
+        remove_btn.add_css_class("danger-btn");
+
+        top.append(&install_btn);
+        top.append(&update_btn);
+        top.append(&remove_btn);
         root.append(&top);
 
         // ---- 内容区:整体可滚动(依赖/描述可能很长)----
@@ -151,25 +164,6 @@ impl DetailPage {
         desc_value.set_selectable(true);
         desc_value.set_hexpand(true);
         card.append(&desc_value);
-
-        // ---- 底部操作按钮 ----
-        let actions = Box::new(Orientation::Horizontal, 10);
-        actions.set_halign(Align::End);
-        actions.set_margin_top(8);
-
-        let install_btn = Button::with_label(i18n::t("install"));
-        install_btn.add_css_class("install-btn");
-
-        let update_btn = Button::with_label(i18n::t("update"));
-        update_btn.add_css_class("update-btn");
-
-        let remove_btn = Button::with_label(i18n::t("uninstall"));
-        remove_btn.add_css_class("danger-btn");
-
-        actions.append(&install_btn);
-        actions.append(&update_btn);
-        actions.append(&remove_btn);
-        card.append(&actions);
 
         root.append(&scroll);
 
