@@ -4,6 +4,8 @@ use std::thread;
 use rust_apt::cache::PackageSort;
 use rust_apt::{new_cache, Cache};
 
+use crate::i18n;
+
 /// 包列表中的单个条目(快照)
 #[derive(Debug, Clone)]
 pub struct PkgInfo {
@@ -19,13 +21,24 @@ pub struct PkgInfo {
 /// 包详情(详情页用)
 #[derive(Debug, Clone)]
 pub struct PkgDetail {
-    pub name: String,
+    pub name: String,             // 包名
+    pub display_name: String,     // 应用名(desktop 文件 Name,未找到时回退包名)
     pub candidate_version: String,
     pub installed_version: String,
     pub summary: String,
     pub description: String,
     pub section: String,
-    pub size: u64,
+    pub installed_size: u64,      // 安装后占用(字节)
+    pub package_size: u64,        // deb 包大小(字节)
+    pub maintainer: String,
+    pub architecture: String,
+    pub homepage: String,
+    pub download_url: String,     // 完整下载地址
+    pub date: String,             // 更新时间(已安装包取 dpkg info 文件 mtime)
+    pub desktop_file: String,     // 桌面文件路径
+    pub exec_command: String,     // 执行命令(desktop Exec)
+    pub exec_path: String,        // 执行路径(Exec 第一个词)
+    pub depends: String,          // 依赖(原始 Depends 字段)
     pub installed: bool,
     pub upgradable: bool,
 }
@@ -161,8 +174,39 @@ fn build_detail(cache: &Cache, name: &str) -> Option<PkgDetail> {
     let pkg = cache.get(name)?;
     let cand = pkg.candidate();
     let inst = pkg.installed();
+    let pkg_name = pkg.name().to_string();
+
+    // 任意索引字段:候选版本优先,回退已安装版本
+    let rec = |field: &str| {
+        cand.as_ref()
+            .and_then(|v| v.get_record(field))
+            .or_else(|| inst.as_ref().and_then(|v| v.get_record(field)))
+    };
+
+    // 桌面文件信息(仅已安装包有本地文件)
+    let zh = crate::i18n::current_is_zh();
+    let mut desktop_file = String::new();
+    let mut display_name = pkg_name.clone();
+    let mut exec_command = String::new();
+    if let Some(list) = installed_file_list(&pkg_name) {
+        if let Some(df) = find_desktop_file(&list) {
+            if let Some((n, e)) = parse_desktop(&df, zh) {
+                desktop_file = df;
+                display_name = n;
+                exec_command = e;
+            }
+        }
+    }
+
+    // 更新时间:Deepin 仓库索引无 Date 字段,已安装包用 dpkg info 文件 mtime 近似
+    let date = inst
+        .as_ref()
+        .and_then(|_| fmt_file_mtime(&format!("/var/lib/dpkg/info/{pkg_name}.list")))
+        .unwrap_or_default();
+
     Some(PkgDetail {
-        name: pkg.name().to_string(),
+        name: pkg_name,
+        display_name,
         candidate_version: cand.as_ref().map(|v| v.version().to_string()).unwrap_or_default(),
         installed_version: inst.as_ref().map(|v| v.version().to_string()).unwrap_or_default(),
         summary: cand
@@ -176,16 +220,110 @@ fn build_detail(cache: &Cache, name: &str) -> Option<PkgDetail> {
             .or_else(|| inst.as_ref().and_then(|v| v.description()))
             .unwrap_or_default(),
         section: cand.as_ref().and_then(|v| v.section().ok()).unwrap_or("").to_string(),
-        size: cand.as_ref().map(|v| v.size()).unwrap_or(0),
+        // rust-apt installed_size() 已把 Installed-Size(KB) 转成字节
+        installed_size: inst
+            .as_ref()
+            .map(|v| v.installed_size())
+            .or_else(|| cand.as_ref().map(|v| v.installed_size()))
+            .unwrap_or(0),
+        package_size: cand.as_ref().map(|v| v.size()).unwrap_or(0),
+        maintainer: rec("Maintainer").unwrap_or_default(),
+        architecture: cand.as_ref().map(|v| v.arch().to_string()).unwrap_or_default(),
+        homepage: rec("Homepage").unwrap_or_default(),
+        download_url: cand.as_ref().and_then(|v| v.uris().next()).unwrap_or_default(),
+        date,
+        desktop_file,
+        exec_command: exec_command.clone(),
+        exec_path: exec_command.split_whitespace().next().unwrap_or("").to_string(),
+        depends: rec("Depends").unwrap_or_default(),
         installed: pkg.is_installed(),
         upgradable: pkg.is_upgradable(),
     })
 }
 
-// ---- 变更操作:pkexec apt-get ----
+/// 已安装包的文件清单(dpkg -L 等价:读 /var/lib/dpkg/info/<name>.list)
+fn installed_file_list(name: &str) -> Option<Vec<String>> {
+    let path = format!("/var/lib/dpkg/info/{name}.list");
+    std::fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.lines().map(|l| l.trim_end().to_string()).collect())
+}
+
+/// 在包文件清单里找 /usr/share/applications/ 下的第一个 .desktop
+fn find_desktop_file(list: &[String]) -> Option<String> {
+    list.iter()
+        .find(|p| p.starts_with("/usr/share/applications/") && p.ends_with(".desktop"))
+        .cloned()
+}
+
+/// 解析 desktop 文件,返回 (显示名, Exec 命令)。
+/// 显示名按当前语言取 Name[zh_CN],否则回退 Name。
+fn parse_desktop(path: &str, zh: bool) -> Option<(String, String)> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut name_plain = String::new();
+    let mut name_zh = String::new();
+    let mut exec = String::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else { continue };
+        let v = v.trim();
+        match k.trim() {
+            "Exec" => exec = v.to_string(),
+            "Name" if name_plain.is_empty() => name_plain = v.to_string(),
+            "Name[zh_CN]" if name_zh.is_empty() => name_zh = v.to_string(),
+            _ => {}
+        }
+    }
+    let name = if zh && !name_zh.is_empty() {
+        name_zh
+    } else {
+        name_plain
+    };
+    if name.is_empty() {
+        None
+    } else {
+        Some((name, exec))
+    }
+}
+
+/// 文件 mtime 格式化为 "YYYY-MM-DD HH:MM:SS"(本地时区)
+fn fmt_file_mtime(path: &str) -> Option<String> {
+    let secs = std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as libc::time_t;
+    unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+        let mut t = secs;
+        if libc::localtime_r(&mut t, &mut tm).is_null() {
+            return None;
+        }
+        let mut buf = [0u8; 64];
+        let fmt = b"%Y-%m-%d %H:%M:%S\0";
+        let n = libc::strftime(
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            fmt.as_ptr() as *const libc::c_char,
+            &tm,
+        );
+        if n == 0 {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&buf[..n]).to_string())
+    }
+}
+
+// ---- 变更操作:sudo -S apt-get ----
 
 /// 异步执行 apt 变更操作,逐行回调输出,结束时回调结果。
-/// 以普通用户运行时通过 pkexec 提权;root 直接执行。
+/// 以普通用户运行时通过 sudo -S 提权(密码框由应用自己弹出,是主窗口子窗口,
+/// 避免系统 polkit 认证框成为独立窗口);root 直接执行。
 pub fn run_apt_op(
     args: Vec<String>,
     on_line: impl Fn(String) + Send + 'static,
@@ -201,12 +339,31 @@ pub fn run_apt_op(
                 .expect("tokio runtime");
             runtime.block_on(async move {
                 let is_root = unsafe { libc::geteuid() == 0 };
-                let mut cmd = tokio::process::Command::new(if is_root { "apt-get" } else { "pkexec" });
-                if !is_root {
-                    cmd.arg("apt-get");
-                }
+
+                // 权限检测(非定时):实时探测当前用户的管理员权限状态。
+                // 免密 → 直接执行;需密码 → 弹应用内密码框;无权限 → 报错不执行。
+                let password = match admin_status().await {
+                    AdminStatus::Root | AdminStatus::Privileged => None,
+                    AdminStatus::NeedsPassword => request_password().await,
+                    AdminStatus::NoPrivilege => {
+                        on_line(i18n::t("no_admin_privilege").to_string());
+                        on_done(false);
+                        return;
+                    }
+                };
+
+                let mut cmd = if is_root {
+                    tokio::process::Command::new("apt-get")
+                } else {
+                    // sudo -S:从 stdin 读密码,-p "" 抑制提示符
+                    let mut c = tokio::process::Command::new("sudo");
+                    c.args(["-S", "-p", ""]);
+                    c.arg("apt-get");
+                    c
+                };
                 cmd.args(&args);
                 let mut child = match cmd
+                    .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
                     .spawn()
@@ -218,6 +375,17 @@ pub fn run_apt_op(
                         return;
                     }
                 };
+
+                // 写入密码后立即关闭 stdin(sudo 读到 EOF 才确定输入结束;
+                // 取消时直接关,让 sudo 失败退出)
+                use tokio::io::AsyncWriteExt;
+                if let Some(mut stdin) = child.stdin.take() {
+                    if let Some(pw) = &password {
+                        let _ = stdin.write_all(format!("{pw}\n").as_bytes()).await;
+                    }
+                    drop(stdin);
+                }
+
                 // 统一输出行通道(stdout/stderr 各自线程读)
                 let (line_tx, line_rx) = tokio::sync::mpsc::channel::<String>(256);
                 if let Some(stdout) = child.stdout.take() {
@@ -247,6 +415,76 @@ pub fn run_apt_op(
             });
         })
         .expect("failed to spawn apt-op thread");
+}
+
+/// 当前用户的管理员权限状态(每次操作前实时检测)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdminStatus {
+    /// 本身就是 root
+    Root,
+    /// 有 sudo 权限且当前免密可用(管理员 NOPASSWD / sudo 时间戳有效)
+    Privileged,
+    /// 有 sudo 权限但需要密码
+    NeedsPassword,
+    /// 没有任何管理员权限
+    NoPrivilege,
+}
+
+/// 权限检测:root → 免密探测(sudo -n) → 权限枚举(sudo -l -n)。
+/// 用 LC_ALL=C 固定 sudo 输出语言,便于解析 "a password is required"。
+async fn admin_status() -> AdminStatus {
+    if unsafe { libc::geteuid() == 0 } {
+        return AdminStatus::Root;
+    }
+    // 1) 免密探测:成功说明现在可以直接执行(sudo 时间戳有效或 NOPASSWD)
+    let free = tokio::process::Command::new("sudo")
+        .args(["-n", "true"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if free {
+        return AdminStatus::Privileged;
+    }
+    // 2) 权限枚举:区分"需要密码"与"不在 sudoers"
+    match tokio::process::Command::new("sudo")
+        .args(["-l", "-n"])
+        .env("LC_ALL", "C")
+        .output()
+        .await
+    {
+        Ok(out) => {
+            if out.status.success() {
+                AdminStatus::Privileged
+            } else {
+                let text = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                if text.contains("a password is required") {
+                    AdminStatus::NeedsPassword
+                } else {
+                    AdminStatus::NoPrivilege
+                }
+            }
+        }
+        Err(_) => AdminStatus::NoPrivilege, // sudo 未安装等
+    }
+}
+
+/// 请求用户输入密码:切到 GTK 主线程弹应用内密码框,等待结果。
+/// 返回 None 表示用户取消(此时 sudo 收到 stdin EOF 直接失败)。
+async fn request_password() -> Option<String> {
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<String>>();
+    glib::MainContext::default().invoke(move || {
+        crate::dialogs::show_password_prompt(move |pw| {
+            let _ = tx.send(pw);
+        });
+    });
+    rx.await.ok().flatten()
 }
 
 /// 等待子进程退出,同时把 stdout/stderr 行转发给 on_line。
@@ -281,5 +519,69 @@ async fn read_lines<R: tokio::io::AsyncRead + Unpin>(
         if tx.send(line).await.is_err() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_desktop_prefers_applications_dir() {
+        let list = vec![
+            "/usr/share/doc".to_string(),
+            "/usr/share/applications/deepin-music.desktop".to_string(),
+        ];
+        assert_eq!(
+            find_desktop_file(&list).as_deref(),
+            Some("/usr/share/applications/deepin-music.desktop")
+        );
+        assert_eq!(find_desktop_file(&[]), None);
+    }
+
+    #[test]
+    fn desktop_parse_zh_and_exec() {
+        let (name, exec) = parse_desktop("/usr/share/applications/deepin-music.desktop", true)
+            .expect("desktop file");
+        assert_eq!(name, "音乐");
+        assert_eq!(exec, "deepin-music %F");
+    }
+
+    #[test]
+    fn desktop_parse_en_fallback() {
+        let (name, _) = parse_desktop("/usr/share/applications/deepin-music.desktop", false)
+            .expect("desktop file");
+        assert_eq!(name, "Deepin Music");
+    }
+
+    #[test]
+    fn mtime_is_local_datetime() {
+        let s = fmt_file_mtime("/var/lib/dpkg/info/deepin-music.list").expect("mtime");
+        assert_eq!(s.len(), 19);
+        assert_eq!(&s[4..5], "-");
+        assert_eq!(&s[13..14], ":");
+    }
+
+    /// 端到端:build_detail 全字段(依赖本机 apt 缓存与已安装的 deepin-music)
+    #[test]
+    fn detail_all_fields() {
+        let cache = new_cache!().expect("apt cache");
+        let d = build_detail(&cache, "deepin-music").expect("detail");
+        assert_eq!(d.name, "deepin-music");
+        assert_eq!(d.display_name, "音乐");
+        assert_eq!(d.candidate_version, "7.0.61");
+        assert_eq!(d.installed_version, "7.0.61");
+        assert_eq!(d.architecture, "loong64");
+        assert!(d.maintainer.contains("packages@deepin.com"));
+        assert!(d.homepage.contains("deepin.org"));
+        assert!(d.depends.contains("libc6 (>= 2.38)"));
+        assert!(d.download_url.contains("deepin-music_7.0.61_loong64.deb"));
+        assert_eq!(d.desktop_file, "/usr/share/applications/deepin-music.desktop");
+        assert_eq!(d.exec_command, "deepin-music %F");
+        assert_eq!(d.exec_path, "deepin-music");
+        assert_eq!(d.installed_size, 27_776_000); // 26.49 MiB
+        assert_eq!(d.package_size, 21_845_500); // 20.8 MiB
+        assert!(!d.date.is_empty());
+        assert!(d.installed);
     }
 }

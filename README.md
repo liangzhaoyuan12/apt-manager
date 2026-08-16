@@ -12,7 +12,7 @@ English | [简体中文](README.zh-CN.md)
 - Install / upgrade / remove packages, `autoremove` for unused dependencies
 - Theme switching (System / Light / Dark), preference remembered
 - Language switching (Simplified Chinese / English / System), preference remembered
-- Detail page: description, version, status badges (installed / upgradable)
+- Detail page: app name / package name / version / architecture / maintainer / updated time / installed size / package size / download URL / homepage / desktop file / exec command / dependencies / description, with status badges (installed / upgradable)
 - Change operations run `apt-get` via `pkexec` elevation; executed directly when root
 
 ## Tech Stack

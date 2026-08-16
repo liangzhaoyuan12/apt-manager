@@ -77,6 +77,7 @@ fn build_window(app: &Application, worker: Arc<AptWorker>, config: Config) {
         .default_width(1024)
         .default_height(700)
         .build();
+    dialogs::set_main_window(&window);
 
     // ---- HeaderBar ----
     let header = HeaderBar::new();
@@ -425,128 +426,65 @@ fn handle_event(state: &Rc<RefCell<AppState>>, ev: UiEvent) {
             let tab = s.current_tab.clone();
             stack.set_visible_child_name(&tab);
         }
+        // 注:不再弹确认框——用户点安装/卸载即已知晓需要 root 权限,
+        // 密码框本身承担最后一道确认;sudo 凭证有效期内连密码框都省了。
         UiEvent::OpInstall(name) => {
-            let s = state.borrow();
-            let win = s.window.clone();
-            let msg = i18n::t("confirm_install").replace("{pkg}", &name);
             let st = state.clone();
-            dialogs::confirm(&win, &msg, i18n::t("requires_root"), move || {
-                let st2 = st.clone();
-                let s = st.borrow();
-                let win = s.window.clone();
-                let title = format!("{}: {name}", i18n::t("install"));
-                dialogs::run_op_dialog(
-                    &win,
-                    &title,
-                    &["install", "-y", "--no-install-recommends", &name],
-                    move || refresh_all(&st2),
-                );
-            });
+            let win = state.borrow().window.clone();
+            let title = format!("{}: {name}", i18n::t("install"));
+            dialogs::run_op_dialog(
+                &win,
+                &title,
+                &["install", "-y", "--no-install-recommends", &name],
+                move || refresh_all(&st),
+            );
         }
         UiEvent::OpUpdate(name) => {
-            let s = state.borrow();
-            let win = s.window.clone();
-            let msg = i18n::t("confirm_update").replace("{pkg}", &name);
             let st = state.clone();
-            dialogs::confirm(&win, &msg, i18n::t("requires_root"), move || {
-                let st2 = st.clone();
-                let s = st.borrow();
-                let win = s.window.clone();
-                let title = format!("{}: {name}", i18n::t("update"));
-                dialogs::run_op_dialog(
-                    &win,
-                    &title,
-                    &["install", "--only-upgrade", "-y", &name],
-                    move || refresh_all(&st2),
-                );
-            });
+            let win = state.borrow().window.clone();
+            let title = format!("{}: {name}", i18n::t("update"));
+            dialogs::run_op_dialog(
+                &win,
+                &title,
+                &["install", "--only-upgrade", "-y", &name],
+                move || refresh_all(&st),
+            );
         }
         UiEvent::OpRemove(name) => {
-            let s = state.borrow();
-            let win = s.window.clone();
-            let msg = i18n::t("confirm_uninstall").replace("{pkg}", &name);
             let st = state.clone();
-            dialogs::confirm(&win, &msg, i18n::t("requires_root"), move || {
-                let st2 = st.clone();
-                let s = st.borrow();
-                let win = s.window.clone();
-                let title = format!("{}: {name}", i18n::t("uninstall"));
-                dialogs::run_op_dialog(&win, &title, &["remove", "-y", &name], move || {
-                    refresh_all(&st2);
-                });
+            let win = state.borrow().window.clone();
+            let title = format!("{}: {name}", i18n::t("uninstall"));
+            dialogs::run_op_dialog(&win, &title, &["remove", "-y", &name], move || {
+                refresh_all(&st);
             });
         }
         UiEvent::ActionUpdateSources => {
-            let s = state.borrow();
-            let win = s.window.clone();
             let st = state.clone();
-            dialogs::confirm(
-                &win,
-                i18n::t("confirm_update_sources"),
-                i18n::t("requires_root"),
-                move || {
-                    let st2 = st.clone();
-                    let s = st.borrow();
-                    let win = s.window.clone();
-                    dialogs::run_op_dialog(&win, tr!("update_sources"), &["update"], move || {
-                        refresh_all(&st2);
-                    });
-                },
-            );
+            let win = state.borrow().window.clone();
+            dialogs::run_op_dialog(&win, tr!("update_sources"), &["update"], move || {
+                refresh_all(&st);
+            });
         }
         UiEvent::ActionAutoRemove => {
-            let s = state.borrow();
-            let win = s.window.clone();
             let st = state.clone();
-            dialogs::confirm(
-                &win,
-                i18n::t("confirm_autoremove"),
-                i18n::t("requires_root"),
-                move || {
-                    let st2 = st.clone();
-                    let s = st.borrow();
-                    let win = s.window.clone();
-                    dialogs::run_op_dialog(&win, tr!("auto_remove"), &["autoremove", "-y"], move || {
-                        refresh_all(&st2);
-                    });
-                },
-            );
+            let win = state.borrow().window.clone();
+            dialogs::run_op_dialog(&win, tr!("auto_remove"), &["autoremove", "-y"], move || {
+                refresh_all(&st);
+            });
         }
         UiEvent::ActionUpgradeAll => {
-            let s = state.borrow();
-            let win = s.window.clone();
             let st = state.clone();
-            dialogs::confirm(
-                &win,
-                i18n::t("confirm_upgrade_all"),
-                i18n::t("requires_root"),
-                move || {
-                    let st2 = st.clone();
-                    let s = st.borrow();
-                    let win = s.window.clone();
-                    dialogs::run_op_dialog(&win, tr!("upgrade_all"), &["upgrade", "-y"], move || {
-                        refresh_all(&st2);
-                    });
-                },
-            );
+            let win = state.borrow().window.clone();
+            dialogs::run_op_dialog(&win, tr!("upgrade_all"), &["upgrade", "-y"], move || {
+                refresh_all(&st);
+            });
         }
         UiEvent::ActionCheckUpdates => {
-            let s = state.borrow();
-            let win = s.window.clone();
             let st = state.clone();
-            dialogs::confirm(
-                &win,
-                i18n::t("confirm_check_updates"),
-                i18n::t("requires_root"),
-                move || {
-                    let st2 = st.clone();
-                    let s = st.borrow();
-                    let win = s.window.clone();
-                    dialogs::run_op_dialog(&win, tr!("check_updates"), &["update"], move || {
-                        refresh_all(&st2);
-                    });
-                },
-            );
+            let win = state.borrow().window.clone();
+            dialogs::run_op_dialog(&win, tr!("check_updates"), &["update"], move || {
+                refresh_all(&st);
+            });
         }
         // 手动刷新列表(已安装页刷新按钮)
         UiEvent::ActionRefresh => {

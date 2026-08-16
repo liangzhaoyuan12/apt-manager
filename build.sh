@@ -85,7 +85,7 @@ Priority: optional
 Architecture: $ARCH
 Maintainer: $MAINTAINER
 Homepage: $HOMEPAGE
-Depends: libgtk-4-1 (>= 4.6), libpango-1.0-0, libglib2.0-0, libc6, apt, dpkg, pkexec | policykit-1
+Depends: libgtk-4-1 (>= 4.6), libpango-1.0-0, libglib2.0-0, libc6, apt, dpkg, sudo
 Description: $DESC_SHORT
  $DESC_LONG
 EOF

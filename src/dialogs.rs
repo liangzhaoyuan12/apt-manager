@@ -1,48 +1,216 @@
 // GTK 4.10+ Dialog 标记弃用,但 AlertDialog 不适合流式输出场景,此处保留使用
 #![allow(deprecated)]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use glib::translate::FromGlibPtrNone;
 use gtk::prelude::*;
 use gtk::{
-    Align, ApplicationWindow, Box, Button, Dialog, Label, Orientation, ScrolledWindow, Spinner,
-    TextView,
+    Align, ApplicationWindow, Box, Button, Dialog, Entry, Grid, Image, Label, Orientation,
+    ScrolledWindow, Separator, Spinner, TextView,
 };
 
 use crate::apt_worker::run_apt_op;
 use crate::i18n;
 
-/// 关于对话框
-pub fn show_about(parent: &ApplicationWindow) {
-    let message = i18n::t("about_title");
-    let dev = format!("{}: liangzhaoyuan12", i18n::t("about_dev"));
-    let license = format!("{}: MIT", i18n::t("about_license"));
-    let repo = format!("{}: https://github.com/liangzhaoyuan12/apt-manager", i18n::t("about_repo"));
-    let detail = format!("{dev}\n{license}\n{repo}");
+/// 主窗口指针(后台线程请求密码时在主线程重建窗口用)
+static MAIN_WINDOW: AtomicUsize = AtomicUsize::new(0);
+
+/// 记录主窗口(应用启动时调用一次)
+pub fn set_main_window(w: &ApplicationWindow) {
+    MAIN_WINDOW.store(w.as_ptr() as usize, Ordering::Relaxed);
+}
+
+/// 取主窗口(借用,不增加引用计数;应用存活期间有效)
+fn main_window() -> Option<ApplicationWindow> {
+    let ptr = MAIN_WINDOW.load(Ordering::Relaxed) as *mut gtk::ffi::GtkApplicationWindow;
+    if ptr.is_null() {
+        return None;
+    }
+    Some(unsafe { ApplicationWindow::from_glib_none(ptr) })
+}
+
+/// 授权密码框:后台线程经主循环调用,on_result 收到 Some(密码) 或 None(取消/关闭)。
+/// 这是 apt-manager 自己的模态子窗口,替代系统 polkit 认证框(dock 归组正常)。
+pub fn show_password_prompt(on_result: impl FnOnce(Option<String>) + 'static) {
+    let Some(win) = main_window() else {
+        on_result(None);
+        return;
+    };
 
     let dialog = Dialog::new();
-    dialog.set_title(Some(&message));
+    dialog.set_title(Some(i18n::t("auth_title")));
+    dialog.set_modal(true);
+    dialog.set_transient_for(Some(&win));
+    dialog.add_css_class("about-dialog");
+
+    let content = Box::new(Orientation::Vertical, 10);
+    content.set_margin_top(20);
+    content.set_margin_bottom(16);
+    content.set_margin_start(24);
+    content.set_margin_end(24);
+    content.set_width_request(380);
+
+    let icon = gtk::Image::from_icon_name("dialog-password");
+    icon.set_pixel_size(48);
+    icon.set_halign(Align::Center);
+    content.append(&icon);
+
+    let msg = Label::new(Some(i18n::t("auth_hint")));
+    msg.set_wrap(true);
+    msg.set_justify(gtk::Justification::Center);
+    msg.set_halign(Align::Center);
+    msg.add_css_class("about-desc");
+    content.append(&msg);
+
+    let entry = Entry::new();
+    entry.set_visibility(false);
+    entry.set_placeholder_text(Some(i18n::t("auth_password")));
+    entry.set_hexpand(true);
+    content.append(&entry);
+
+    let btns = Box::new(Orientation::Horizontal, 8);
+    btns.set_halign(Align::End);
+    let cancel = Button::with_label(i18n::t("cancel"));
+    let ok = Button::with_label(i18n::t("auth_confirm"));
+    ok.add_css_class("suggested-action");
+    ok.set_sensitive(false);
+    btns.append(&cancel);
+    btns.append(&ok);
+    content.append(&btns);
+
+    dialog.content_area().append(&content);
+
+    // 结果只回调一次(取消/确认/回车/关窗 多入口)
+    // 注意:此模块导入了 gtk::Box,堆分配必须用全路径 std::boxed::Box
+    let slot: Rc<RefCell<Option<std::boxed::Box<dyn FnOnce(Option<String>)>>>> =
+        Rc::new(RefCell::new(Some(std::boxed::Box::new(on_result))));
+
+    let d = dialog.clone();
+    let s = slot.clone();
+    cancel.connect_clicked(move |_| {
+        if let Some(f) = s.borrow_mut().take() {
+            f(None);
+        }
+        d.close();
+    });
+
+    let d = dialog.clone();
+    let e = entry.clone();
+    let s = slot.clone();
+    ok.connect_clicked(move |_| {
+        let pw = e.text().to_string();
+        if let Some(f) = s.borrow_mut().take() {
+            f(Some(pw));
+        }
+        d.close();
+    });
+
+    let ok = ok.clone();
+    entry.connect_changed(move |e| ok.set_sensitive(!e.text().is_empty()));
+
+    let d = dialog.clone();
+    let e2 = entry.clone();
+    let s = slot.clone();
+    entry.connect_activate(move |_| {
+        if !e2.text().is_empty() {
+            let pw = e2.text().to_string();
+            if let Some(f) = s.borrow_mut().take() {
+                f(Some(pw));
+            }
+            d.close();
+        }
+    });
+
+    // ESC / 窗口关闭按钮 → 视为取消
+    let s = slot.clone();
+    dialog.connect_close_request(move |_| {
+        if let Some(f) = s.borrow_mut().take() {
+            f(None);
+        }
+        glib::Propagation::Proceed
+    });
+
+    dialog.present();
+    entry.grab_focus();
+}
+
+/// 应用图标名(打包时安装到 hicolor)
+const APP_ICON_NAME: &str = "com.liangzhaoyuan12.aptmanager";
+
+/// 关于对话框(GNOME 风格:图标 + 名称 + 版本 + 描述 + 信息行 + 链接)
+pub fn show_about(parent: &ApplicationWindow) {
+    let dialog = Dialog::new();
+    dialog.set_title(Some(i18n::t("about_title")));
     dialog.set_modal(true);
     dialog.set_transient_for(Some(parent));
+    dialog.set_default_size(420, -1);
+    dialog.add_css_class("about-dialog");
 
-    let content = Box::new(Orientation::Vertical, 8);
-    content.set_margin_top(16);
-    content.set_margin_bottom(16);
-    content.set_margin_start(16);
-    content.set_margin_end(16);
+    let content = Box::new(Orientation::Vertical, 6);
+    content.set_margin_top(28);
+    content.set_margin_bottom(22);
+    content.set_margin_start(36);
+    content.set_margin_end(36);
 
-    let msg_label = Label::new(Some(&message));
-    msg_label.set_halign(Align::Start);
-    let detail_label = Label::new(Some(&detail));
-    detail_label.set_selectable(true);
-    detail_label.set_halign(Align::Start);
-    detail_label.set_wrap(true);
-    content.append(&msg_label);
-    content.append(&detail_label);
+    // 应用图标(未安装时回退系统图标)
+    let icon_name = if gtk::IconTheme::default().has_icon(APP_ICON_NAME) {
+        APP_ICON_NAME
+    } else {
+        "applications-system"
+    };
+    let icon = Image::from_icon_name(icon_name);
+    icon.set_pixel_size(96);
+    icon.set_halign(Align::Center);
+    icon.set_margin_bottom(6);
+    content.append(&icon);
 
+    // 应用名
+    let title = Label::new(Some(i18n::t("app_name")));
+    title.add_css_class("about-app-name");
+    title.set_halign(Align::Center);
+    content.append(&title);
+
+    // 版本
+    let version_text = format!("{} {}", i18n::t("about_version"), env!("CARGO_PKG_VERSION"));
+    let version = Label::new(Some(&version_text));
+    version.add_css_class("about-version");
+    version.set_halign(Align::Center);
+    version.set_margin_bottom(10);
+    content.append(&version);
+
+    // 简短描述(居中换行)
+    let desc = Label::new(Some(i18n::t("about_desc")));
+    desc.add_css_class("about-desc");
+    desc.set_wrap(true);
+    desc.set_justify(gtk::Justification::Center);
+    desc.set_halign(Align::Center);
+    desc.set_margin_bottom(8);
+    content.append(&desc);
+
+    content.append(&Separator::new(Orientation::Horizontal));
+
+    // 信息行:开发者 / 主页(可点击)/ 开源协议
+    let info = Grid::new();
+    info.set_column_spacing(16);
+    info.set_row_spacing(4);
+    info.set_halign(Align::Center);
+    info.set_margin_top(8);
+    info.set_margin_bottom(8);
+    about_row(&info, 0, "about_dev", "liangzhaoyuan12", false);
+    about_row(&info, 1, "about_repo", "https://github.com/liangzhaoyuan12/apt-manager", true);
+    about_row(&info, 2, "about_license", "MIT", false);
+    content.append(&info);
+
+    content.append(&Separator::new(Orientation::Horizontal));
+
+    // 关闭按钮(居中,建议样式)
     let close_btn = Button::with_label(i18n::t("op_close"));
-    close_btn.set_halign(Align::End);
-    close_btn.add_css_class("ghost-btn");
+    close_btn.add_css_class("suggested-action");
+    close_btn.set_halign(Align::Center);
+    close_btn.set_margin_top(10);
     content.append(&close_btn);
 
     dialog.content_area().append(&content);
@@ -53,60 +221,34 @@ pub fn show_about(parent: &ApplicationWindow) {
     dialog.present();
 }
 
-/// 确认对话框,回调返回是否确认
-pub fn confirm(
-    parent: &ApplicationWindow,
-    message: &str,
-    detail: &str,
-    on_confirm: impl Fn() + 'static,
-) {
-    let dialog = Dialog::new();
-    dialog.set_title(Some(message));
-    dialog.set_modal(true);
-    dialog.set_transient_for(Some(parent));
+/// 关于对话框信息行:左侧灰色标签(右对齐)+ 右侧值。link=true 时值为可点击超链接。
+fn about_row(grid: &Grid, row: i32, label_key: &str, value: &str, link: bool) {
+    let label = Label::new(Some(i18n::t(label_key)));
+    label.add_css_class("about-info-label");
+    label.set_halign(Align::End);
 
-    let content = Box::new(Orientation::Vertical, 8);
-    content.set_margin_top(16);
-    content.set_margin_bottom(16);
-    content.set_margin_start(16);
-    content.set_margin_end(16);
+    let val = Label::new(None);
+    val.add_css_class("about-info-value");
+    val.set_halign(Align::Start);
+    val.set_selectable(true);
+    if link {
+        val.set_markup(&format!("<a href=\"{value}\">{value}</a>"));
+        val.connect_activate_link(|_l, uri| {
+            // timestamp 0 = 无事件时间,GTK 允许
+            gtk::show_uri(None::<&gtk::Window>, uri, 0);
+            glib::Propagation::Stop
+        });
+    } else {
+        val.set_text(value);
+    }
 
-    let msg_label = Label::new(Some(message));
-    msg_label.set_halign(Align::Start);
-    let detail_label = Label::new(Some(detail));
-    detail_label.set_selectable(true);
-    detail_label.set_halign(Align::Start);
-    detail_label.set_wrap(true);
-    content.append(&msg_label);
-    content.append(&detail_label);
-
-    let btn_row = Box::new(Orientation::Horizontal, 8);
-    btn_row.set_halign(Align::End);
-    let cancel_btn = Button::with_label(i18n::t("cancel"));
-    let confirm_btn = Button::with_label(i18n::t("confirm"));
-    confirm_btn.add_css_class("suggested-action");
-    btn_row.append(&cancel_btn);
-    btn_row.append(&confirm_btn);
-    content.append(&btn_row);
-
-    dialog.content_area().append(&content);
-    cancel_btn.connect_clicked({
-        let dialog = dialog.clone();
-        move |_| dialog.close()
-    });
-    confirm_btn.connect_clicked({
-        let dialog = dialog.clone();
-        move |_| {
-            on_confirm();
-            dialog.close();
-        }
-    });
-    dialog.present();
+    grid.attach(&label, 0, row, 1, 1);
+    grid.attach(&val, 1, row, 1, 1);
 }
 
 /// 执行操作对话框:弹窗显示 apt-get 输出,结束后回调
 pub fn run_op_dialog(
-    _parent: &ApplicationWindow,
+    parent: &ApplicationWindow,
     title: &str,
     args: &[&str],
     on_finished: impl Fn() + 'static,
@@ -114,6 +256,8 @@ pub fn run_op_dialog(
     let dialog = Dialog::new();
     dialog.set_title(Some(title));
     dialog.set_modal(true);
+    // 关键:必须挂到主窗口,否则是独立顶层窗口,dock 不归组
+    dialog.set_transient_for(Some(parent));
     dialog.set_default_size(560, 360);
     dialog.add_css_class("op-dialog");
 
