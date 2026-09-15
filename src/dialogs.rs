@@ -1,5 +1,3 @@
-// GTK 4.10+ Dialog 标记弃用,但 AlertDialog 不适合流式输出场景,此处保留使用
-#![allow(deprecated)]
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -8,8 +6,9 @@ use std::sync::Arc;
 use glib::translate::FromGlibPtrNone;
 use gtk::gdk::prelude::*;
 use gtk::prelude::*;
+use adw::prelude::*;
 use gtk::{
-    Align, ApplicationWindow, Box, Button, Dialog, Grid, Image, Label, Orientation,
+    Align, Box, Button, Image, Label, Orientation,
     ScrolledWindow, Separator, Spinner, TextView,
 };
 
@@ -20,17 +19,17 @@ use crate::i18n;
 static MAIN_WINDOW: AtomicUsize = AtomicUsize::new(0);
 
 /// 记录主窗口(应用启动时调用一次)
-pub fn set_main_window(w: &ApplicationWindow) {
+pub fn set_main_window(w: &adw::ApplicationWindow) {
     MAIN_WINDOW.store(w.as_ptr() as usize, Ordering::Relaxed);
 }
 
 /// 取主窗口(借用,不增加引用计数;应用存活期间有效)
-pub(crate) fn main_window() -> Option<ApplicationWindow> {
-    let ptr = MAIN_WINDOW.load(Ordering::Relaxed) as *mut gtk::ffi::GtkApplicationWindow;
+pub(crate) fn main_window() -> Option<adw::ApplicationWindow> {
+    let ptr = MAIN_WINDOW.load(Ordering::Relaxed) as *mut adw::ffi::AdwApplicationWindow;
     if ptr.is_null() {
         return None;
     }
-    Some(unsafe { ApplicationWindow::from_glib_none(ptr) })
+    Some(unsafe { adw::ApplicationWindow::from_glib_none(ptr) })
 }
 
 /// 应用图标名(打包时安装到 hicolor)
@@ -101,7 +100,6 @@ fn read_deb_info(path: &str) -> Option<DebInfo> {
 }
 
 /// .deb 包安装详情对话框:显示控制信息 + 安装按钮。
-/// 高度限制为屏幕 1/3,内容超出进滚动区;安装按钮在右上角。
 /// on_installed 在安装完成后回调(主窗口刷新用)。
 pub fn show_deb_dialog(path: &str, on_installed: impl Fn() + 'static) {
     let win = main_window(); // 可能为空(纯 deb 打开时无主窗口)
@@ -111,21 +109,11 @@ pub fn show_deb_dialog(path: &str, on_installed: impl Fn() + 'static) {
         return;
     };
 
-    let dialog = Dialog::new();
-    dialog.set_title(Some(i18n::t("deb_install")));
-    dialog.set_modal(true);
-    if let Some(w) = &win {
-        dialog.set_transient_for(Some(w));
-    }
+    let dialog = adw::Dialog::new();
+    dialog.set_title(i18n::t("deb_install"));
+    dialog.set_content_width(480);
+    dialog.set_content_height(400);
     dialog.add_css_class("about-dialog");
-    // 高度不超过屏幕 1/3,超出部分滚动
-    let max_h = gtk::gdk::Display::default()
-        .and_then(|d| d.monitors().item(0))
-        .and_then(|m| m.downcast::<gtk::gdk::Monitor>().ok())
-        .map(|m| m.geometry().height() / 3)
-        .unwrap_or(300)
-        .max(240);
-    dialog.set_default_size(480, max_h);
 
     let root_content = Box::new(Orientation::Vertical, 8);
     root_content.set_margin_top(16);
@@ -136,7 +124,7 @@ pub fn show_deb_dialog(path: &str, on_installed: impl Fn() + 'static) {
     // ---- 顶栏:图标 + 包名/版本(左),安装按钮(右上)----
     let top = Box::new(Orientation::Horizontal, 10);
 
-    let icon = gtk::Image::from_icon_name("package-x-generic");
+    let icon = Image::from_icon_name("package-x-generic");
     icon.set_pixel_size(40);
     icon.set_valign(Align::Center);
     top.append(&icon);
@@ -215,10 +203,10 @@ pub fn show_deb_dialog(path: &str, on_installed: impl Fn() + 'static) {
     close_row.append(&close);
     root_content.append(&close_row);
 
-    dialog.content_area().append(&root_content);
+    dialog.set_child(Some(&root_content));
     close.connect_clicked({
         let d = dialog.clone();
-        move |_| d.close()
+        move |_| { d.close(); }
     });
     // on_installed 只能触发一次,用 RefCell 包装供 Fn 闭包取用
     let on_installed = Rc::new(RefCell::new(Some(on_installed)));
@@ -238,54 +226,26 @@ pub fn show_deb_dialog(path: &str, on_installed: impl Fn() + 'static) {
         }
     });
 
-    dialog.present();
+    if let Some(w) = &win {
+        dialog.present(Some(w));
+    } else {
+        dialog.present(None::<&adw::ApplicationWindow>);
+    }
 }
 
 /// deb 读取失败提示框(避免静默无反应)
-fn show_deb_error(win: Option<&ApplicationWindow>, path: &str) {
-    let dialog = Dialog::new();
-    dialog.set_title(Some(i18n::t("deb_open_failed")));
-    dialog.set_modal(true);
+fn show_deb_error(win: Option<&adw::ApplicationWindow>, path: &str) {
+    let dialog = adw::AlertDialog::builder()
+        .heading(i18n::t("deb_open_failed"))
+        .body(path)
+        .build();
+    dialog.add_response("close", i18n::t("op_close"));
+    dialog.set_response_appearance("close", adw::ResponseAppearance::Suggested);
     if let Some(w) = win {
-        dialog.set_transient_for(Some(w));
+        dialog.present(Some(w));
+    } else {
+        dialog.present(None::<&adw::ApplicationWindow>);
     }
-    dialog.add_css_class("about-dialog");
-
-    let content = Box::new(Orientation::Vertical, 10);
-    content.set_margin_top(20);
-    content.set_margin_bottom(16);
-    content.set_margin_start(24);
-    content.set_margin_end(24);
-    content.set_width_request(380);
-
-    let icon = gtk::Image::from_icon_name("dialog-error");
-    icon.set_pixel_size(48);
-    icon.set_halign(Align::Center);
-    content.append(&icon);
-
-    let msg = Label::new(Some(i18n::t("deb_open_failed")));
-    msg.add_css_class("about-app-name");
-    msg.set_halign(Align::Center);
-    content.append(&msg);
-
-    let path_label = Label::new(Some(path));
-    path_label.set_wrap(true);
-    path_label.set_selectable(true);
-    path_label.add_css_class("about-desc");
-    path_label.set_halign(Align::Center);
-    content.append(&path_label);
-
-    let close = Button::with_label(i18n::t("op_close"));
-    close.set_halign(Align::Center);
-    close.add_css_class("suggested-action");
-    content.append(&close);
-
-    dialog.content_area().append(&content);
-    close.connect_clicked({
-        let d = dialog.clone();
-        move |_| d.close()
-    });
-    dialog.present();
 }
 
 /// 信息行:左侧灰色标签 + 右侧可换行值(单列)
@@ -310,127 +270,35 @@ fn deb_row(parent: &Box, key: &str, value: &str) {
     parent.append(&row);
 }
 
-/// 关于对话框(GNOME 风格:图标 + 名称 + 版本 + 描述 + 信息行 + 链接)
-pub fn show_about(parent: &ApplicationWindow) {
-    let dialog = Dialog::new();
-    dialog.set_title(Some(i18n::t("about_title")));
-    dialog.set_modal(true);
-    dialog.set_transient_for(Some(parent));
-    dialog.set_default_size(420, -1);
-    dialog.add_css_class("about-dialog");
-
-    let content = Box::new(Orientation::Vertical, 6);
-    content.set_margin_top(28);
-    content.set_margin_bottom(22);
-    content.set_margin_start(36);
-    content.set_margin_end(36);
-
-    // 应用图标(未安装时回退系统图标)
-    let icon_name = if gtk::IconTheme::default().has_icon(APP_ICON_NAME) {
-        APP_ICON_NAME
-    } else {
-        "applications-system"
-    };
-    let icon = Image::from_icon_name(icon_name);
-    icon.set_pixel_size(96);
-    icon.set_halign(Align::Center);
-    icon.set_margin_bottom(6);
-    content.append(&icon);
-
-    // 应用名
-    let title = Label::new(Some(i18n::t("app_name")));
-    title.add_css_class("about-app-name");
-    title.set_halign(Align::Center);
-    content.append(&title);
-
-    // 版本
-    let version_text = format!("{} {}", i18n::t("about_version"), env!("CARGO_PKG_VERSION"));
-    let version = Label::new(Some(&version_text));
-    version.add_css_class("about-version");
-    version.set_halign(Align::Center);
-    version.set_margin_bottom(10);
-    content.append(&version);
-
-    // 简短描述(居中换行)
-    let desc = Label::new(Some(i18n::t("about_desc")));
-    desc.add_css_class("about-desc");
-    desc.set_wrap(true);
-    desc.set_justify(gtk::Justification::Center);
-    desc.set_halign(Align::Center);
-    desc.set_margin_bottom(8);
-    content.append(&desc);
-
-    content.append(&Separator::new(Orientation::Horizontal));
-
-    // 信息行:开发者 / 主页(可点击)/ 开源协议
-    let info = Grid::new();
-    info.set_column_spacing(16);
-    info.set_row_spacing(4);
-    info.set_halign(Align::Center);
-    info.set_margin_top(8);
-    info.set_margin_bottom(8);
-    about_row(&info, 0, "about_dev", "liangzhaoyuan12", false);
-    about_row(&info, 1, "about_repo", "https://github.com/liangzhaoyuan12/apt-manager", true);
-    about_row(&info, 2, "about_license", "MIT", false);
-    content.append(&info);
-
-    content.append(&Separator::new(Orientation::Horizontal));
-
-    // 关闭按钮(居中,建议样式)
-    let close_btn = Button::with_label(i18n::t("op_close"));
-    close_btn.add_css_class("suggested-action");
-    close_btn.set_halign(Align::Center);
-    close_btn.set_margin_top(10);
-    content.append(&close_btn);
-
-    dialog.content_area().append(&content);
-    close_btn.connect_clicked({
-        let dialog = dialog.clone();
-        move |_| dialog.close()
-    });
-    dialog.present();
-}
-
-/// 关于对话框信息行:左侧灰色标签(右对齐)+ 右侧值。link=true 时值为可点击超链接。
-fn about_row(grid: &Grid, row: i32, label_key: &str, value: &str, link: bool) {
-    let label = Label::new(Some(i18n::t(label_key)));
-    label.add_css_class("about-info-label");
-    label.set_halign(Align::End);
-
-    let val = Label::new(None);
-    val.add_css_class("about-info-value");
-    val.set_halign(Align::Start);
-    val.set_selectable(true);
-    if link {
-        val.set_markup(&format!("<a href=\"{value}\">{value}</a>"));
-        val.connect_activate_link(|_l, uri| {
-            // timestamp 0 = 无事件时间,GTK 允许
-            gtk::show_uri(None::<&gtk::Window>, uri, 0);
-            glib::Propagation::Stop
-        });
-    } else {
-        val.set_text(value);
-    }
-
-    grid.attach(&label, 0, row, 1, 1);
-    grid.attach(&val, 1, row, 1, 1);
+/// 关于对话框(GNOME 风格:使用 adw::AboutWindow)
+pub fn show_about(parent: &adw::ApplicationWindow) {
+    let about = adw::AboutWindow::builder()
+        .transient_for(parent)
+        .modal(true)
+        .application_name(i18n::t("app_name"))
+        .application_icon(APP_ICON_NAME)
+        .developer_name("liangzhaoyuan12")
+        .version(env!("CARGO_PKG_VERSION"))
+        .developers(vec!["liangzhaoyuan12"])
+        .copyright("© 2024 liangzhaoyuan12")
+        .license_type(gtk::License::MitX11)
+        .website("https://github.com/liangzhaoyuan12/apt-manager")
+        .issue_url("https://github.com/liangzhaoyuan12/apt-manager/issues")
+        .build();
+    about.present();
 }
 
 /// 执行操作对话框:弹窗显示 apt-get 输出,结束后回调
 pub fn run_op_dialog(
-    parent: Option<&ApplicationWindow>,
+    parent: Option<&adw::ApplicationWindow>,
     title: &str,
     args: &[&str],
     on_finished: impl Fn() + 'static,
 ) {
-    let dialog = Dialog::new();
-    dialog.set_title(Some(title));
-    dialog.set_modal(true);
-    // 挂到主窗口(dock 归组);纯 deb 打开时无主窗口则独立显示
-    if let Some(p) = parent {
-        dialog.set_transient_for(Some(p));
-    }
-    dialog.set_default_size(560, 360);
+    let dialog = adw::Dialog::new();
+    dialog.set_title(title);
+    dialog.set_content_width(560);
+    dialog.set_content_height(360);
     dialog.add_css_class("op-dialog");
 
     let content = Box::new(Orientation::Vertical, 10);
@@ -470,9 +338,13 @@ pub fn run_op_dialog(
     content.append(&top);
     content.append(&scrolled);
     content.append(&close_btn);
-    dialog.content_area().append(&content);
+    dialog.set_child(Some(&content));
 
-    dialog.present();
+    if let Some(p) = parent {
+        dialog.present(Some(p));
+    } else {
+        dialog.present(None::<&adw::ApplicationWindow>);
+    }
 
     // 输出追加到文本框:后台线程写 mpsc,主循环 timeout 轮询刷新
     let (line_tx, line_rx) = std::sync::mpsc::channel::<String>();

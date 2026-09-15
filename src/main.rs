@@ -13,8 +13,9 @@ use std::sync::Arc;
 use gtk::gio;
 use gtk::gio::prelude::*;
 use gtk::prelude::*;
+use adw::prelude::*;
 use gtk::{
-    Application, ApplicationWindow, Box, HeaderBar, MenuButton, PopoverMenu, Stack,
+    Box, HeaderBar, MenuButton, PopoverMenu, Stack,
     StackTransitionType, ToggleButton,
 };
 
@@ -52,11 +53,11 @@ struct AppState {
     detail: Rc<RefCell<detail_page::DetailPage>>,
     stack: Stack,
     current_tab: String,
-    window: ApplicationWindow,
+    window: adw::ApplicationWindow,
 }
 
 fn main() {
-    let app = Application::builder()
+    let app = adw::Application::builder()
         .application_id("com.liangzhaoyuan12.aptmanager")
         .flags(
             gio::ApplicationFlags::HANDLES_COMMAND_LINE | gio::ApplicationFlags::HANDLES_OPEN,
@@ -68,7 +69,7 @@ fn main() {
 
     // 公共:确保主窗口已构建。show=true 时首次构建即显示、已有窗口则重新显示;
     // show=false(纯 deb 打开)构建隐藏窗口:应用保持存活、对话框有 parent,但不进主页面。
-    let ensure_window = |app: &Application,
+    let ensure_window = |app: &adw::Application,
                          worker: &Arc<AptWorker>,
                          wb: &Arc<std::sync::atomic::AtomicBool>,
                          show: bool| {
@@ -175,7 +176,7 @@ fn uri_to_local_path(s: &str) -> String {
 }
 
 /// 构建整个主窗口(语言切换时重建)
-fn build_window(app: &Application, worker: Arc<AptWorker>, config: Config, show: bool) {
+fn build_window(app: &adw::Application, worker: Arc<AptWorker>, config: Config, show: bool) {
     // 事件通道(glib 0.22 无 MainContext::channel,用 std mpsc + idle 轮询)
     let (ev_tx, ev_rx) = std::sync::mpsc::channel::<UiEvent>();
     // 注册全局通道(语言切换重建时覆盖,供 deb 安装完成等触发刷新)
@@ -184,7 +185,7 @@ fn build_window(app: &Application, worker: Arc<AptWorker>, config: Config, show:
         .lock()
         .unwrap() = Some(ev_tx.clone());
 
-    let window = ApplicationWindow::builder()
+    let window = adw::ApplicationWindow::builder()
         .application(app)
         .title(tr!("app_name"))
         .default_width(1024)
@@ -192,17 +193,22 @@ fn build_window(app: &Application, worker: Arc<AptWorker>, config: Config, show:
         .build();
     dialogs::set_main_window(&window);
 
+    // ---- ToolbarView 包装(HeaderBar + 内容) ----
+    let toolbar = adw::ToolbarView::new();
+
     // ---- HeaderBar ----
     let header = HeaderBar::new();
     header.set_show_title_buttons(true);
-    window.set_titlebar(Some(&header));
+    toolbar.add_top_bar(&header);
 
     // ---- 内容 Stack ----
     let stack = Stack::new();
     stack.set_transition_type(StackTransitionType::Crossfade);
     stack.set_hexpand(true);
     stack.set_vexpand(true);
-    window.set_child(Some(&stack));
+    toolbar.set_content(Some(&stack));
+
+    window.set_content(Some(&toolbar));
 
     // ---- 创建三个列表页 ----
     let ev = ev_tx.clone();
