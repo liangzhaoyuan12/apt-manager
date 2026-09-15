@@ -415,3 +415,123 @@ pub fn run_op_dialog(
         }
     });
 }
+
+/// autoremove 包列表选择对话框:显示要删除的包,用户可勾选保留哪些。
+/// on_confirm 回调时传入需要删除的包名列表(已排除用户保留的)。
+pub fn show_autoremove_dialog(
+    parent: Option<&adw::ApplicationWindow>,
+    packages: Vec<String>,
+    on_confirm: impl Fn(Vec<String>) + 'static,
+) {
+    if packages.is_empty() {
+        // 没有需要删除的包
+        let dialog = adw::AlertDialog::builder()
+            .heading(i18n::t("auto_remove"))
+            .body(i18n::t("autoremove_no_packages"))
+            .build();
+        dialog.add_response("ok", i18n::t("confirm"));
+        if let Some(w) = parent {
+            dialog.present(Some(w));
+        } else {
+            dialog.present(None::<&adw::ApplicationWindow>);
+        }
+        return;
+    }
+
+    let dialog = adw::Dialog::new();
+    dialog.set_title(i18n::t("auto_remove"));
+    dialog.set_content_width(480);
+    dialog.set_content_height(400);
+    dialog.add_css_class("about-dialog");
+
+    let content = Box::new(Orientation::Vertical, 10);
+    content.set_margin_top(16);
+    content.set_margin_bottom(16);
+    content.set_margin_start(16);
+    content.set_margin_end(16);
+
+    // 说明文字
+    let hint = Label::new(Some(i18n::t("autoremove_hint")));
+    hint.set_xalign(0.0);
+    hint.set_wrap(true);
+    content.append(&hint);
+
+    // 包列表(带复选框)
+    let scroll = ScrolledWindow::new();
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll.set_vexpand(true);
+
+    let list_box = gtk::ListBox::new();
+    list_box.set_selection_mode(gtk::SelectionMode::None);
+    list_box.add_css_class("boxed-list");
+
+    // 为每个包创建一个带复选框的行
+    let checkboxes: Vec<gtk::CheckButton> = packages
+        .iter()
+        .map(|pkg| {
+            let row = adw::ActionRow::new();
+            row.set_title(pkg);
+
+            let check = gtk::CheckButton::new();
+            check.set_active(true); // 默认选中(将被删除)
+            row.add_suffix(&check);
+            row.set_activatable_widget(Some(&check));
+
+            list_box.append(&row);
+            check
+        })
+        .collect();
+
+    scroll.set_child(Some(&list_box));
+    content.append(&scroll);
+
+    // 按钮栏
+    let btns = Box::new(Orientation::Horizontal, 8);
+    btns.set_halign(Align::End);
+
+    let cancel_btn = Button::with_label(i18n::t("cancel"));
+    let remove_btn = Button::with_label(i18n::t("auto_remove"));
+    remove_btn.add_css_class("suggested-action");
+    remove_btn.add_css_class("destructive-action");
+
+    btns.append(&cancel_btn);
+    btns.append(&remove_btn);
+    content.append(&btns);
+
+    dialog.set_child(Some(&content));
+
+    // 取消按钮
+    cancel_btn.connect_clicked({
+        let d = dialog.clone();
+        move |_| {
+            d.close();
+        }
+    });
+
+    // 删除按钮:收集选中的包,回调后关闭
+    let d = dialog.clone();
+    let pkgs = packages.clone();
+    remove_btn.connect_clicked(move |_| {
+        let selected: Vec<String> = pkgs
+            .iter()
+            .zip(checkboxes.iter())
+            .filter(|(_, check)| check.is_active())
+            .map(|(pkg, _)| pkg.clone())
+            .collect();
+        on_confirm(selected);
+        d.close();
+    });
+
+    // ESC/关闭 → 取消
+    dialog.connect_close_attempt({
+        move |d| {
+            d.close();
+        }
+    });
+
+    if let Some(w) = parent {
+        dialog.present(Some(w));
+    } else {
+        dialog.present(None::<&adw::ApplicationWindow>);
+    }
+}

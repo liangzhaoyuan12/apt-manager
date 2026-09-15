@@ -614,9 +614,34 @@ fn handle_event(state: &Rc<RefCell<AppState>>, ev: UiEvent) {
         UiEvent::ActionAutoRemove => {
             let st = state.clone();
             let win = state.borrow().window.clone();
-            dialogs::run_op_dialog(Some(&win), tr!("auto_remove"), &["autoremove", "-y"], move || {
-                refresh_all(&st);
-            });
+            // 先执行 dry-run 获取要删除的包列表
+            let (packages, success) = apt_worker::dry_run_autoremove();
+            if !success {
+                dialogs::run_op_dialog(Some(&win), tr!("auto_remove"), &["autoremove", "-y"], move || {
+                    refresh_all(&st);
+                });
+                return;
+            }
+            // 弹出包列表选择对话框
+            let win2 = win.clone();
+            dialogs::show_autoremove_dialog(
+                Some(&win),
+                packages,
+                move |selected| {
+                    if selected.is_empty() {
+                        return;
+                    }
+                    // 构建命令:autoremove 后跟选中的包名
+                    let mut args = vec!["autoremove", "-y"];
+                    let pkg_strs: Vec<&str> = selected.iter().map(|s| s.as_str()).collect();
+                    args.extend_from_slice(&pkg_strs);
+                    let title = tr!("auto_remove").to_string();
+                    let st = st.clone();
+                    dialogs::run_op_dialog(Some(&win2), &title, &args, move || {
+                        refresh_all(&st);
+                    });
+                },
+            );
         }
         UiEvent::ActionUpgradeAll => {
             let st = state.clone();

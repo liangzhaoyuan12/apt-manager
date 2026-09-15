@@ -319,6 +319,41 @@ fn fmt_file_mtime(path: &str) -> Option<String> {
 
 // ---- 变更操作:pkexec apt-get ----
 
+/// 执行 dry-run 并解析出要被删除的包列表。
+/// dry-run 不需要管理员权限,直接返回 (包名列表, 是否成功)。
+pub fn dry_run_autoremove() -> (Vec<String>, bool) {
+    let output = std::process::Command::new("apt-get")
+        .args(["autoremove", "--dry-run"])
+        .output();
+
+    match output {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let mut packages = Vec::new();
+
+            // 优先:从 Remv 行提取(apt 内部格式,不受语言影响)
+            // 格式固定: "Remv package-name [version]"
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("Remv") {
+                    if let Some(name) = trimmed.split_whitespace().nth(1) {
+                        let name = name.split('[').next().unwrap_or(name);
+                        if !name.is_empty() {
+                            packages.push(name.to_string());
+                        }
+                    }
+                }
+            }
+
+            (packages, out.status.success())
+        }
+        Err(e) => {
+            eprintln!("dry-run failed: {e}");
+            (Vec::new(), false)
+        }
+    }
+}
+
 /// 异步执行 apt 变更操作,逐行回调输出,结束时回调结果。
 /// root 直接执行 apt-get;非 root 通过 pkexec 提权(pkexec 弹系统认证框)。
 pub fn run_apt_op(
