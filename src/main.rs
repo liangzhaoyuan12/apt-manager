@@ -546,7 +546,7 @@ fn handle_event(state: &Rc<RefCell<AppState>>, ev: UiEvent) {
             stack.set_visible_child_name(&tab);
         }
         // 注:不再弹确认框——用户点安装/卸载即已知晓需要 root 权限,
-        // 密码框本身承担最后一道确认;sudo 凭证有效期内连密码框都省了。
+        // pkexec 会弹出系统认证框进行授权。
         UiEvent::OpInstall(name) => {
             let st = state.clone();
             let win = state.borrow().window.clone();

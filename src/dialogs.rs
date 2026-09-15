@@ -9,7 +9,7 @@ use glib::translate::FromGlibPtrNone;
 use gtk::gdk::prelude::*;
 use gtk::prelude::*;
 use gtk::{
-    Align, ApplicationWindow, Box, Button, Dialog, Entry, Grid, Image, Label, Orientation,
+    Align, ApplicationWindow, Box, Button, Dialog, Grid, Image, Label, Orientation,
     ScrolledWindow, Separator, Spinner, TextView,
 };
 
@@ -31,110 +31,6 @@ pub(crate) fn main_window() -> Option<ApplicationWindow> {
         return None;
     }
     Some(unsafe { ApplicationWindow::from_glib_none(ptr) })
-}
-
-/// 授权密码框:后台线程经主循环调用,on_result 收到 Some(密码) 或 None(取消/关闭)。
-/// 这是 apt-manager 自己的模态子窗口,替代系统 polkit 认证框(dock 归组正常)。
-pub fn show_password_prompt(on_result: impl FnOnce(Option<String>) + 'static) {
-    let win = main_window(); // 可能为空(纯 deb 打开时无主窗口)
-
-    let dialog = Dialog::new();
-    dialog.set_title(Some(i18n::t("auth_title")));
-    dialog.set_modal(true);
-    if let Some(w) = &win {
-        dialog.set_transient_for(Some(w));
-    }
-    dialog.add_css_class("about-dialog");
-
-    let content = Box::new(Orientation::Vertical, 10);
-    content.set_margin_top(20);
-    content.set_margin_bottom(16);
-    content.set_margin_start(24);
-    content.set_margin_end(24);
-    content.set_width_request(380);
-
-    let icon = gtk::Image::from_icon_name("dialog-password");
-    icon.set_pixel_size(48);
-    icon.set_halign(Align::Center);
-    content.append(&icon);
-
-    let msg = Label::new(Some(i18n::t("auth_hint")));
-    msg.set_wrap(true);
-    msg.set_justify(gtk::Justification::Center);
-    msg.set_halign(Align::Center);
-    msg.add_css_class("about-desc");
-    content.append(&msg);
-
-    let entry = Entry::new();
-    entry.set_visibility(false);
-    entry.set_placeholder_text(Some(i18n::t("auth_password")));
-    entry.set_hexpand(true);
-    content.append(&entry);
-
-    let btns = Box::new(Orientation::Horizontal, 8);
-    btns.set_halign(Align::End);
-    let cancel = Button::with_label(i18n::t("cancel"));
-    let ok = Button::with_label(i18n::t("auth_confirm"));
-    ok.add_css_class("suggested-action");
-    ok.set_sensitive(false);
-    btns.append(&cancel);
-    btns.append(&ok);
-    content.append(&btns);
-
-    dialog.content_area().append(&content);
-
-    // 结果只回调一次(取消/确认/回车/关窗 多入口)
-    // 注意:此模块导入了 gtk::Box,堆分配必须用全路径 std::boxed::Box
-    let slot: Rc<RefCell<Option<std::boxed::Box<dyn FnOnce(Option<String>)>>>> =
-        Rc::new(RefCell::new(Some(std::boxed::Box::new(on_result))));
-
-    let d = dialog.clone();
-    let s = slot.clone();
-    cancel.connect_clicked(move |_| {
-        if let Some(f) = s.borrow_mut().take() {
-            f(None);
-        }
-        d.close();
-    });
-
-    let d = dialog.clone();
-    let e = entry.clone();
-    let s = slot.clone();
-    ok.connect_clicked(move |_| {
-        let pw = e.text().to_string();
-        if let Some(f) = s.borrow_mut().take() {
-            f(Some(pw));
-        }
-        d.close();
-    });
-
-    let ok = ok.clone();
-    entry.connect_changed(move |e| ok.set_sensitive(!e.text().is_empty()));
-
-    let d = dialog.clone();
-    let e2 = entry.clone();
-    let s = slot.clone();
-    entry.connect_activate(move |_| {
-        if !e2.text().is_empty() {
-            let pw = e2.text().to_string();
-            if let Some(f) = s.borrow_mut().take() {
-                f(Some(pw));
-            }
-            d.close();
-        }
-    });
-
-    // ESC / 窗口关闭按钮 → 视为取消
-    let s = slot.clone();
-    dialog.connect_close_request(move |_| {
-        if let Some(f) = s.borrow_mut().take() {
-            f(None);
-        }
-        glib::Propagation::Proceed
-    });
-
-    dialog.present();
-    entry.grab_focus();
 }
 
 /// 应用图标名(打包时安装到 hicolor)
