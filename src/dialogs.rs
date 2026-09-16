@@ -535,3 +535,174 @@ pub fn show_autoremove_dialog(
         dialog.present(None::<&adw::ApplicationWindow>);
     }
 }
+
+/// Debian 源管理对话框:显示当前 non-free 状态,可开关。
+pub fn show_sources_dialog(parent: &adw::ApplicationWindow, on_done: impl Fn() + 'static) {
+    let repos = crate::sources::parse_sources();
+
+    if repos.is_empty() {
+        let dialog = adw::AlertDialog::builder()
+            .heading(i18n::t("sources_title"))
+            .body(i18n::t("sources_no_repos"))
+            .build();
+        dialog.add_response("ok", i18n::t("confirm"));
+        dialog.present(Some(parent));
+        return;
+    }
+
+    // 检测当前 non-free 状态:只要有任意一个仓库有 non-free 就算开启
+    let currently_enabled = repos.iter().any(|r| r.has_non_free);
+
+    let dialog = adw::Dialog::new();
+    dialog.set_title(i18n::t("sources_title"));
+    dialog.set_content_width(480);
+    dialog.add_css_class("about-dialog");
+
+    let content = Box::new(Orientation::Vertical, 10);
+    content.set_margin_top(16);
+    content.set_margin_bottom(16);
+    content.set_margin_start(16);
+    content.set_margin_end(16);
+
+    // 说明文字
+    let hint = Label::new(Some(i18n::t("sources_hint")));
+    hint.set_xalign(0.0);
+    hint.set_wrap(true);
+    content.append(&hint);
+
+    // 当前状态
+    let status_text = if currently_enabled {
+        i18n::t("sources_status_enabled")
+    } else {
+        i18n::t("sources_status_disabled")
+    };
+    let status = Label::new(Some(status_text));
+    status.set_xalign(0.0);
+    status.add_css_class("heading");
+    content.append(&status);
+
+    // non-free 开关
+    let switch_row = adw::SwitchRow::builder()
+        .title(i18n::t("sources_non_free"))
+        .active(currently_enabled)
+        .build();
+    content.append(&switch_row);
+
+    // non-free-firmware 开关
+    let has_firmware = repos.iter().any(|r| r.has_non_free_firmware);
+    let firmware_row = adw::SwitchRow::builder()
+        .title(i18n::t("sources_non_free_firmware"))
+        .active(has_firmware)
+        .build();
+    content.append(&firmware_row);
+
+    // 按钮栏
+    let btns = Box::new(Orientation::Horizontal, 8);
+    btns.set_halign(Align::End);
+    btns.set_margin_top(10);
+
+    let cancel_btn = Button::with_label(i18n::t("cancel"));
+    let apply_btn = Button::with_label(i18n::t("sources_apply"));
+    apply_btn.add_css_class("suggested-action");
+
+    btns.append(&cancel_btn);
+    btns.append(&apply_btn);
+    content.append(&btns);
+
+    dialog.set_child(Some(&content));
+
+    // 取消按钮
+    cancel_btn.connect_clicked({
+        let d = dialog.clone();
+        move |_| {
+            d.close();
+        }
+    });
+
+    // 应用按钮
+    let d = dialog.clone();
+    let p = parent.clone();
+    let repos_clone = repos.clone();
+    apply_btn.connect_clicked(move |_| {
+        let enable_non_free = switch_row.is_active();
+        let enable_firmware = firmware_row.is_active();
+
+        // 生成新的源配置
+        let new_content = generate_sources_with_options(&repos_clone, enable_non_free, enable_firmware);
+
+        // 应用并刷新
+        let (success, msg) = crate::sources::apply_sources(&new_content);
+
+        // 显示结果
+        let result_dialog = adw::AlertDialog::builder()
+            .heading(if success {
+                i18n::t("sources_apply_success")
+            } else {
+                i18n::t("sources_apply_failed")
+            })
+            .body(&msg)
+            .build();
+        result_dialog.add_response("ok", i18n::t("confirm"));
+        result_dialog.present(Some(&p));
+
+        if success {
+            on_done();
+        }
+        d.close();
+    });
+
+    dialog.present(Some(parent));
+}
+
+/// 生成带选项的源配置
+fn generate_sources_with_options(
+    repos: &[crate::sources::RepoStatus],
+    enable_non_free: bool,
+    enable_firmware: bool,
+) -> String {
+    let mut output = String::new();
+
+    for repo in repos {
+        let mut components = repo.components.clone();
+
+        // 处理 non-free
+        if enable_non_free {
+            if !components.contains(&"non-free".to_string()) {
+                components.push("non-free".to_string());
+            }
+        } else {
+            components.retain(|c| c != "non-free");
+        }
+
+        // 处理 non-free-firmware
+        if enable_firmware {
+            if !components.contains(&"non-free-firmware".to_string()) {
+                components.push("non-free-firmware".to_string());
+            }
+        } else {
+            components.retain(|c| c != "non-free-firmware");
+        }
+
+        // 按标准顺序排列
+        components.sort_by(|a, b| {
+            let order = |s: &str| match s {
+                "main" => 0,
+                "contrib" => 1,
+                "non-free" => 2,
+                "non-free-firmware" => 3,
+                _ => 4,
+            };
+            order(a).cmp(&order(b))
+        });
+
+        let line = format!(
+            "deb {} {} {}\n",
+            repo.uri,
+            repo.distribution,
+            components.join(" ")
+        );
+        output.push_str(&line);
+    }
+
+    output
+}

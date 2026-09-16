@@ -4,6 +4,7 @@ mod detail_page;
 mod dialogs;
 mod i18n;
 mod list_page;
+mod sources;
 mod theme;
 
 use std::cell::RefCell;
@@ -333,6 +334,11 @@ fn build_window(app: &adw::Application, worker: Arc<AptWorker>, config: Config, 
     // ---- 右侧:主题 / 语言 / 关于 合并为单个菜单 ----
     let menu_root = gio::Menu::new();
 
+    // Debian 源管理(仅 Debian 系统显示)
+    if crate::sources::is_debian() {
+        menu_root.append(Some(tr!("sources_title")), Some("win.sources"));
+    }
+
     // 主题组(单选)
     let theme_items = gio::Menu::new();
     for (label, target) in [
@@ -442,6 +448,23 @@ fn build_window(app: &adw::Application, worker: Arc<AptWorker>, config: Config, 
         });
     }
     window.add_action(&about_action);
+
+    // Debian 源管理(仅 Debian 系统)
+    if crate::sources::is_debian() {
+        let sources_action = gio::SimpleAction::new("sources", None);
+        {
+            let st = state.clone();
+            sources_action.connect_activate(move |_, _| {
+                let s = st.borrow();
+                let win = s.window.clone();
+                let st2 = st.clone();
+                dialogs::show_sources_dialog(&win, move || {
+                    refresh_all(&st2);
+                });
+            });
+        }
+        window.add_action(&sources_action);
+    }
 
     // 主题(stateful action,state 即当前选中值,radio 菜单据此打勾)
     let theme_action = gio::SimpleAction::new_stateful(

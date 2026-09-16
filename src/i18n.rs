@@ -145,6 +145,16 @@ static ZH: &[(&str, &str)] = &[
     ("size_kb", "{n} KB"),
     ("size_mb", "{n} MB"),
     ("size_gb", "{n} GB"),
+    ("sources_title", "Debian 源管理"),
+    ("sources_hint", "管理 Debian 软件源的 non-free 组件。开关后将自动刷新软件源列表。"),
+    ("sources_no_repos", "未检测到有效的软件源配置。"),
+    ("sources_status_enabled", "当前状态：non-free 已开启"),
+    ("sources_status_disabled", "当前状态：non-free 未开启"),
+    ("sources_non_free", "开启 non-free（专有软件）"),
+    ("sources_non_free_firmware", "开启 non-free-firmware（专有固件）"),
+    ("sources_apply", "应用"),
+    ("sources_apply_success", "应用成功"),
+    ("sources_apply_failed", "应用失败"),
 ];
 
 static EN: &[(&str, &str)] = &[
@@ -230,4 +240,14 @@ static EN: &[(&str, &str)] = &[
     ("size_kb", "{n} KB"),
     ("size_mb", "{n} MB"),
     ("size_gb", "{n} GB"),
+    ("sources_title", "Debian Sources"),
+    ("sources_hint", "Manage non-free components in Debian software sources. The source list will be refreshed after applying."),
+    ("sources_no_repos", "No valid source configuration found."),
+    ("sources_status_enabled", "Status: non-free is enabled"),
+    ("sources_status_disabled", "Status: non-free is disabled"),
+    ("sources_non_free", "Enable non-free (proprietary software)"),
+    ("sources_non_free_firmware", "Enable non-free-firmware (proprietary firmware)"),
+    ("sources_apply", "Apply"),
+    ("sources_apply_success", "Applied successfully"),
+    ("sources_apply_failed", "Failed to apply"),
 ];
