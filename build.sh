@@ -50,11 +50,10 @@ trap 'rm -rf "$STAGE"' EXIT
 install -Dm755 "$BIN_PATH" "$STAGE/usr/bin/$PKG_NAME"
 
 # 2.2 .desktop 入口
-# 注意:文件名必须是可执行文件同名(apt-manager.desktop)——deepin dock 通过
-# AM.Identify 按进程名得到 desktop id,再按文件名找 desktop 文件;用反向域名
-# 文件名会导致 dock 匹配不到图标(菜单正常、dock 空白)。
+# 文件名必须与 application_id 一致(com.liangzhaoyuan12.aptmanager.desktop),
+# 否则 KDE Plasma Wayland 的 dock 通过 app-id 匹配不到 desktop 文件,图标显示为 Wayland 默认。
 mkdir -p "$STAGE/usr/share/applications" "$STAGE/DEBIAN"
-cat > "$STAGE/usr/share/applications/$PKG_NAME.desktop" <<EOF
+cat > "$STAGE/usr/share/applications/$APP_ID.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Apt Manager
@@ -98,9 +97,11 @@ Description: $DESC_SHORT
  $DESC_LONG
 EOF
 
-# 2.5 升级/卸载时清理旧版遗留的反向域名 desktop 文件(0.3.0 及以前)
-cat > "$STAGE/DEBIAN/prerm" <<EOF
+# 2.5 升级/卸载时清理旧版遗留的 desktop 文件
+# 0.6.0 及以前用 apt-manager.desktop,更早版本用反向域名 com.liangzhaoyuan12.aptmanager.desktop(误)
+cat > "$STAGE/DEBIAN/prerm" <<'EOF'
 #!/bin/sh
+rm -f /usr/share/applications/apt-manager.desktop
 rm -f /usr/share/applications/com.liangzhaoyuan12.aptmanager.desktop
 exit 0
 EOF
