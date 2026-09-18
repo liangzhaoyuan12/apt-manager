@@ -88,7 +88,7 @@ fn main() {
     };
 
     // open 信号:文件管理器经 D-Bus org.freedesktop.Application.Open 打开 deb。
-    // 带 .deb 时只弹安装框,不进主页面;否则正常启动主窗口。
+    // 带 .deb 时显示主窗口并弹安装框;否则正常启动主窗口。
     {
         let worker = worker.clone();
         let wb = window_built.clone();
@@ -105,8 +105,8 @@ fn main() {
             }
             match deb {
                 Some(path) => {
-                    // 隐藏构建主窗口(应用存活 + 对话框有 parent),不进主页面
-                    ensure_window(app, &worker, &wb, false);
+                    // 显示主窗口 + 弹安装对话框
+                    ensure_window(app, &worker, &wb, true);
                     dialogs::show_deb_dialog(&path, refresh_cb());
                 }
                 None => ensure_window(app, &worker, &wb, true),
@@ -119,7 +119,7 @@ fn main() {
         let worker = worker.clone();
         let wb = window_built.clone();
         app.connect_command_line(move |app, cmd| {
-            // 命令行带 .deb 文件 → 只弹安装详情对话框,不进主页面
+            // 命令行带 .deb 文件 → 显示主窗口并弹安装详情对话框
             // (文件管理器经 MimeType 打开时传 file:// URI,需转本地路径)
             let deb = cmd
                 .arguments()
@@ -130,8 +130,8 @@ fn main() {
             match deb {
                 Some(uri) => {
                     let path = uri_to_local_path(&uri);
-                    // 隐藏构建主窗口(应用存活 + 对话框有 parent),不进主页面
-                    ensure_window(app, &worker, &wb, false);
+                    // 显示主窗口 + 弹安装对话框
+                    ensure_window(app, &worker, &wb, true);
                     dialogs::show_deb_dialog(&path, refresh_cb());
                 }
                 None => ensure_window(app, &worker, &wb, true),

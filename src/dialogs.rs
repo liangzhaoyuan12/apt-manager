@@ -50,6 +50,8 @@ struct DebInfo {
 
 /// 读取 .deb 控制信息(走 dpkg-deb -f,无需额外压缩库)
 fn read_deb_info(path: &str) -> Option<DebInfo> {
+    use std::collections::BTreeMap;
+
     let out = std::process::Command::new("dpkg-deb")
         .arg("-f")
         .arg(path)
@@ -67,16 +69,35 @@ fn read_deb_info(path: &str) -> Option<DebInfo> {
     if !out.status.success() {
         return None;
     }
+
+    // 解析输出为 map: 每行 "FieldName: value"，支持多行值(缩进续行)
     let text = String::from_utf8_lossy(&out.stdout);
-    let mut lines = text.lines();
-    let mut next = || lines.next().unwrap_or("").trim().to_string();
-    let package = next();
-    let version = next();
-    let architecture = next();
-    let maintainer = next();
-    let installed_size = next().parse().unwrap_or(0);
-    let depends = next();
-    let homepage = next();
+    let mut fields: BTreeMap<String, String> = BTreeMap::new();
+    let mut current_key: Option<String> = None;
+    let mut current_val = String::new();
+
+    for line in text.lines() {
+        if line.starts_with(char::is_uppercase) || line.starts_with(char::is_alphabetic) {
+            // 新字段: 写入上一个
+            if let Some(key) = current_key.take() {
+                fields.insert(key, current_val.trim().to_string());
+            }
+            if let Some((k, v)) = line.split_once(':') {
+                let key = k.trim().to_string();
+                let val = v.trim().to_string();
+                current_key = Some(key);
+                current_val = val;
+            }
+        } else if line.starts_with(' ') || line.starts_with('\t') {
+            // 续行
+            current_val.push('\n');
+            current_val.push_str(line.trim());
+        }
+    }
+    if let Some(key) = current_key.take() {
+        fields.insert(key, current_val.trim().to_string());
+    }
+
     // Description 多行,单独取
     let desc_out = std::process::Command::new("dpkg-deb")
         .arg("-f")
@@ -86,14 +107,19 @@ fn read_deb_info(path: &str) -> Option<DebInfo> {
         .ok()?;
     let description = String::from_utf8_lossy(&desc_out.stdout).trim().to_string();
     let file_size = std::fs::metadata(path).ok()?.len();
+
+    let get = |key: &str| -> String {
+        fields.get(key).cloned().unwrap_or_default()
+    };
+
     Some(DebInfo {
-        package,
-        version,
-        architecture,
-        maintainer,
-        installed_size,
-        depends,
-        homepage,
+        package: get("Package"),
+        version: get("Version"),
+        architecture: get("Architecture"),
+        maintainer: get("Maintainer"),
+        installed_size: get("Installed-Size").parse().unwrap_or(0),
+        depends: get("Depends"),
+        homepage: get("Homepage"),
         description,
         file_size,
     })

@@ -73,7 +73,7 @@ StartupNotify=true
 # 窗口 WM_CLASS 是二进制名,dock 按它归组显示图标
 StartupWMClass=$PKG_NAME
 # 作为 .deb 文件打开方式(双击 deb 用 apt-manager 安装)
-MimeType=application/vnd.debian.binary-package;
+MimeType=application/vnd.debian.binary-package;application/x-deb;
 EOF
 
 # 2.3 应用图标 (从项目根目录 icon.png,512x512)
