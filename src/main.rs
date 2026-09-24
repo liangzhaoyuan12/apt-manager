@@ -3,6 +3,7 @@ mod config;
 mod detail_page;
 mod dialogs;
 mod i18n;
+mod icons;
 mod list_page;
 mod sources;
 mod theme;

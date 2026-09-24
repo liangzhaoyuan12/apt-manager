@@ -11,6 +11,8 @@ use crate::i18n;
 pub struct DetailPage {
     pub root: gtk::Box,
     title: Label,
+    /// 应用图标(desktop Icon 字段,无图标时隐藏)
+    icon_img: gtk::Image,
     badge: Label,
     version_value: Label,
     summary_value: Label,
@@ -101,9 +103,14 @@ impl DetailPage {
         card.add_css_class("detail-card");
         content.append(&card);
 
-        // 标题行:应用名 + 徽章
+        // 标题行:应用图标 + 应用名 + 徽章
         let title_row = Box::new(Orientation::Horizontal, 10);
         title_row.set_halign(Align::Start);
+        let icon_img = gtk::Image::new();
+        icon_img.set_pixel_size(56);
+        icon_img.set_valign(Align::Center);
+        icon_img.set_visible(false);
+        title_row.append(&icon_img);
         let title = Label::new(None);
         title.add_css_class("detail-title");
         let badge = Label::new(None);
@@ -170,6 +177,7 @@ impl DetailPage {
         let page = Rc::new(RefCell::new(Self {
             root,
             title,
+            icon_img,
             badge,
             version_value,
             summary_value,
@@ -228,6 +236,9 @@ impl DetailPage {
     pub fn set_detail(&mut self, d: PkgDetail) {
         self.detail = Some(d.clone());
         self.title.set_text(&d.display_name);
+        // 应用图标:desktop Icon 指定的路径或图标名,无则隐藏
+        let has_icon = crate::icons::set_image(&self.icon_img, &d.icon, 56);
+        self.icon_img.set_visible(has_icon);
         self.version_value
             .set_text(&format_versions(&d.installed_version, &d.candidate_version));
         self.app_name_value.set_text(&d.display_name);

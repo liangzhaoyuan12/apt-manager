@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 
 use rust_apt::cache::PackageSort;
@@ -14,6 +16,8 @@ pub struct PkgInfo {
     pub summary: String,
     pub installed: bool,
     pub upgradable: bool,
+    /// desktop 文件 Icon 字段(绝对路径或图标名),无 desktop/无 Icon 时为空
+    pub icon: String,
 }
 
 /// 包详情(详情页用)
@@ -35,6 +39,7 @@ pub struct PkgDetail {
     pub date: String,             // 更新时间(已安装包取 dpkg info 文件 mtime)
     pub desktop_file: String,     // 桌面文件路径
     pub exec_command: String,     // 执行命令(desktop Exec)
+    pub icon: String,             // 图标(desktop Icon 字段:绝对路径或图标名)
     pub exec_path: String,        // 执行路径(Exec 第一个词)
     pub depends: String,          // 依赖(原始 Depends 字段)
     pub installed: bool,
@@ -43,7 +48,7 @@ pub struct PkgDetail {
 
 /// 后台工作线程请求
 enum Req {
-    Snapshot(Sender<Vec<PkgInfo>>),
+    Snapshot(Sender<Arc<Vec<PkgInfo>>>),
     Detail {
         name: String,
         reply: Sender<Option<PkgDetail>>,
@@ -67,9 +72,10 @@ impl AptWorker {
     }
 
     /// 异步请求包快照,完成后在主线程回调。
+    /// 回调用 Arc 共享:三个列表页复用同一份数据,免去 69k 条目 ×3 的深拷贝。
     /// glib 0.22 无 MainContext::channel:std mpsc + 主循环 timeout 轮询。
-    pub fn request_snapshot(&self, cb: impl FnOnce(Vec<PkgInfo>) + 'static) {
-        let (reply_tx, reply_rx) = channel::<Vec<PkgInfo>>();
+    pub fn request_snapshot(&self, cb: impl FnOnce(Arc<Vec<PkgInfo>>) + 'static) {
+        let (reply_tx, reply_rx) = channel::<Arc<Vec<PkgInfo>>>();
         let _ = self.tx.send(Req::Snapshot(reply_tx));
         let mut cb = Some(cb);
         glib::timeout_add_local(std::time::Duration::from_millis(40), move || {
@@ -113,19 +119,19 @@ fn worker_loop(rx: Receiver<Req>) {
     let mut cache: Option<Cache> = None;
     while let Ok(req) = rx.recv() {
         match req {
-            Req::Snapshot(reply) => {
-                match new_cache!() {
-                    Ok(c) => {
-                        let snap = build_snapshot(&c);
-                        cache = Some(c);
-                        let _ = reply.send(snap);
-                    }
-                    Err(e) => {
-                        eprintln!("apt cache rebuild failed: {e:?}");
-                        let _ = reply.send(Vec::new());
-                    }
+            Req::Snapshot(reply) => match new_cache!() {
+                Ok(c) => {
+                    // 图标映射随每次快照重建:安装/卸载后新包的 desktop 图标能同步进来
+                    let icons = build_icon_map();
+                    let snap = Arc::new(build_snapshot(&c, &icons));
+                    cache = Some(c);
+                    let _ = reply.send(snap);
                 }
-            }
+                Err(e) => {
+                    eprintln!("apt cache rebuild failed: {e:?}");
+                    let _ = reply.send(Arc::new(Vec::new()));
+                }
+            },
             Req::Detail { name, reply } => {
                 if cache.is_none() {
                     match new_cache!() {
@@ -146,7 +152,7 @@ fn worker_loop(rx: Receiver<Req>) {
 }
 
 /// 全量快照:69k 包带摘要约 7 秒,后台线程执行
-fn build_snapshot(cache: &Cache) -> Vec<PkgInfo> {
+fn build_snapshot(cache: &Cache, icons: &HashMap<String, String>) -> Vec<PkgInfo> {
     let mut out = Vec::with_capacity(70000);
     for pkg in cache.packages(&PackageSort::default().names()) {
         let name = pkg.name().to_string();
@@ -156,16 +162,56 @@ fn build_snapshot(cache: &Cache) -> Vec<PkgInfo> {
             .map(|v| v.version().to_string())
             .unwrap_or_default();
         let summary = pkg.candidate().and_then(|v| v.summary()).unwrap_or_default();
+        let installed = pkg.is_installed();
+        let icon = if installed {
+            icons.get(&name).cloned().unwrap_or_default()
+        } else {
+            String::new()
+        };
         out.push(PkgInfo {
             name,
             version: candidate_version,
             installed_version,
             summary,
-            installed: pkg.is_installed(),
+            installed,
             upgradable: pkg.is_upgradable(),
+            icon,
         });
     }
     out
+}
+
+/// 扫描全部已安装包的 dpkg 文件清单,提取各包第一个 desktop 文件的 Icon 字段。
+/// 包名 → Icon(绝对路径或图标名)。仅已安装包有本地清单。
+fn build_icon_map() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let Ok(rd) = std::fs::read_dir("/var/lib/dpkg/info") else {
+        return map;
+    };
+    for entry in rd.flatten() {
+        let fname = entry.file_name();
+        let fname = fname.to_string_lossy();
+        let Some(pkg) = fname.strip_suffix(".list") else {
+            continue;
+        };
+        let Ok(list) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        // 与 find_desktop_file 同规则:取第一个 /usr/share/applications/*.desktop
+        let Some(df) = list
+            .lines()
+            .find(|p| p.starts_with("/usr/share/applications/") && p.ends_with(".desktop"))
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        if let Some(d) = parse_desktop(&df) {
+            if !d.icon.is_empty() {
+                map.insert(pkg.to_string(), d.icon);
+            }
+        }
+    }
+    map
 }
 
 fn build_detail(cache: &Cache, name: &str) -> Option<PkgDetail> {
@@ -186,12 +232,14 @@ fn build_detail(cache: &Cache, name: &str) -> Option<PkgDetail> {
     let mut desktop_file = String::new();
     let mut display_name = pkg_name.clone();
     let mut exec_command = String::new();
+    let mut icon = String::new();
     if let Some(list) = installed_file_list(&pkg_name) {
         if let Some(df) = find_desktop_file(&list) {
-            if let Some((n, e)) = parse_desktop(&df, zh) {
+            if let Some(d) = parse_desktop(&df) {
+                display_name = localize_name(&d, zh);
+                exec_command = d.exec;
+                icon = d.icon;
                 desktop_file = df;
-                display_name = n;
-                exec_command = e;
             }
         }
     }
@@ -232,6 +280,7 @@ fn build_detail(cache: &Cache, name: &str) -> Option<PkgDetail> {
         date,
         desktop_file,
         exec_command: exec_command.clone(),
+        icon,
         exec_path: exec_command.split_whitespace().next().unwrap_or("").to_string(),
         depends: rec("Depends").unwrap_or_default(),
         installed: pkg.is_installed(),
@@ -254,36 +303,60 @@ fn find_desktop_file(list: &[String]) -> Option<String> {
         .cloned()
 }
 
-/// 解析 desktop 文件,返回 (显示名, Exec 命令)。
-/// 显示名按当前语言取 Name[zh_CN],否则回退 Name。
-fn parse_desktop(path: &str, zh: bool) -> Option<(String, String)> {
+/// desktop 文件关键字段
+struct DesktopInfo {
+    name: String,
+    name_zh: String,
+    exec: String,
+    icon: String,
+}
+
+/// 解析 desktop 文件:Name / Name[zh_CN] / Exec / Icon。
+/// 只读 [Desktop Entry] 段之前的公共键;读不到或无 Name 返回 None。
+fn parse_desktop(path: &str) -> Option<DesktopInfo> {
     let content = std::fs::read_to_string(path).ok()?;
     let mut name_plain = String::new();
     let mut name_zh = String::new();
     let mut exec = String::new();
+    let mut icon = String::new();
+    let mut in_entry = false;
     for line in content.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+        if line.starts_with('[') {
+            // 只取 [Desktop Entry] 段:读到后续段(Action/Shell)立即停止,防其键覆盖
+            if in_entry {
+                break;
+            }
+            in_entry = line == "[Desktop Entry]";
+            continue;
+        }
+        // 段外内容(注释/续行前的空行)不参与解析;续行(缩进)按无效行跳过
+        if !in_entry || line.is_empty() || line.starts_with('#') {
             continue;
         }
         let Some((k, v)) = line.split_once('=') else { continue };
         let v = v.trim();
         match k.trim() {
             "Exec" => exec = v.to_string(),
+            "Icon" if icon.is_empty() => icon = v.to_string(),
             "Name" if name_plain.is_empty() => name_plain = v.to_string(),
             "Name[zh_CN]" if name_zh.is_empty() => name_zh = v.to_string(),
             _ => {}
         }
     }
-    let name = if zh && !name_zh.is_empty() {
-        name_zh
-    } else {
-        name_plain
-    };
-    if name.is_empty() {
+    if name_plain.is_empty() && name_zh.is_empty() {
         None
     } else {
-        Some((name, exec))
+        Some(DesktopInfo { name: name_plain, name_zh, exec, icon })
+    }
+}
+
+/// 显示名:中文界面取 Name[zh_CN],缺失回退 Name。
+fn localize_name(d: &DesktopInfo, zh: bool) -> String {
+    if zh && !d.name_zh.is_empty() {
+        d.name_zh.clone()
+    } else {
+        d.name.clone()
     }
 }
 
@@ -464,6 +537,10 @@ async fn read_lines<R: tokio::io::AsyncRead + Unpin>(
 mod tests {
     use super::*;
 
+    /// rust-apt 的 Cache/apt 全局状态非线程安全:并发 new_cache! 会 glibc 堆损坏,
+    /// 用例间串行化(--test-threads>1 也安全)。
+    static APT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn find_desktop_prefers_applications_dir() {
         let list = vec![
@@ -479,17 +556,40 @@ mod tests {
 
     #[test]
     fn desktop_parse_zh_and_exec() {
-        let (name, exec) = parse_desktop("/usr/share/applications/deepin-music.desktop", true)
-            .expect("desktop file");
-        assert_eq!(name, "音乐");
-        assert_eq!(exec, "deepin-music %F");
+        let d = parse_desktop("/usr/share/applications/deepin-music.desktop").expect("desktop file");
+        assert_eq!(localize_name(&d, true), "音乐");
+        assert_eq!(d.exec, "deepin-music %F");
+        assert_eq!(d.icon, "deepin-music");
     }
 
     #[test]
     fn desktop_parse_en_fallback() {
-        let (name, _) = parse_desktop("/usr/share/applications/deepin-music.desktop", false)
-            .expect("desktop file");
-        assert_eq!(name, "Deepin Music");
+        let d = parse_desktop("/usr/share/applications/deepin-music.desktop").expect("desktop file");
+        assert_eq!(localize_name(&d, false), "Deepin Music");
+    }
+
+    /// 图标映射:本机已安装的 deepin-music 应有 Icon
+    #[test]
+    fn icon_map_finds_installed_desktop_icons() {
+        let _g = APT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = std::time::Instant::now();
+        let map = build_icon_map();
+        let elapsed = t.elapsed();
+        eprintln!("build_icon_map: {} entries in {:?}", map.len(), elapsed);
+        assert_eq!(map.get("deepin-music").map(String::as_str), Some("deepin-music"));
+        assert!(!map.is_empty());
+    }
+
+    /// 快照构建耗时基线(打印,便于观察性能回归)
+    #[test]
+    fn snapshot_timing() {
+        let _g = APT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = std::time::Instant::now();
+        let cache = new_cache!().expect("apt cache");
+        let open = t.elapsed();
+        let t = std::time::Instant::now();
+        let snap = build_snapshot(&cache, &build_icon_map());
+        eprintln!("new_cache={open:?} build_snapshot={:?} pkgs={}", t.elapsed(), snap.len());
     }
 
     #[test]
@@ -503,22 +603,27 @@ mod tests {
     /// 端到端:build_detail 全字段(依赖本机 apt 缓存与已安装的 deepin-music)
     #[test]
     fn detail_all_fields() {
+        let _g = APT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cache = new_cache!().expect("apt cache");
         let d = build_detail(&cache, "deepin-music").expect("detail");
         assert_eq!(d.name, "deepin-music");
         assert_eq!(d.display_name, "音乐");
-        assert_eq!(d.candidate_version, "7.0.61");
+        // 仓库可能比已安装新,只断言非空(硬编码版本会随 apt update 失效)
+        assert!(!d.candidate_version.is_empty());
         assert_eq!(d.installed_version, "7.0.61");
         assert_eq!(d.architecture, "loong64");
         assert!(d.maintainer.contains("packages@deepin.com"));
         assert!(d.homepage.contains("deepin.org"));
         assert!(d.depends.contains("libc6 (>= 2.38)"));
-        assert!(d.download_url.contains("deepin-music_7.0.61_loong64.deb"));
+        // 候选版本随仓库变化,断言文件名前缀/架构即可
+        assert!(d.download_url.contains("deepin-music_") && d.download_url.ends_with("_loong64.deb"));
         assert_eq!(d.desktop_file, "/usr/share/applications/deepin-music.desktop");
+        assert_eq!(d.icon, "deepin-music");
         assert_eq!(d.exec_command, "deepin-music %F");
         assert_eq!(d.exec_path, "deepin-music");
-        assert_eq!(d.installed_size, 27_776_000); // 26.49 MiB
-        assert_eq!(d.package_size, 21_845_500); // 20.8 MiB
+        // 大小随版本变化,断言量级即可(避免 apt update 后断言失效)
+        assert!(d.installed_size > 1_000_000);
+        assert!(d.package_size > 1_000_000);
         assert!(!d.date.is_empty());
         assert!(d.installed);
     }

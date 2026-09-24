@@ -1,11 +1,12 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gtk::prelude::*;
 use gtk::{
-    Align, Box, Button, Label, ListBox, ListBoxRow, Orientation, ScrolledWindow, SearchEntry,
-    Widget,
+    Align, Box, Button, FlowBox, Label, ListBox, ListBoxRow, Orientation, ScrolledWindow,
+    SearchEntry, Widget,
 };
 
 use crate::apt_worker::PkgInfo;
@@ -41,6 +42,12 @@ pub struct PkgListPage {
     next_btn: Button,
     multi_btn: Button,
     batch_count: Label,
+    /// 左下角"查看已选项"小按钮(多选且有选中时可见)
+    selected_btn: Button,
+    /// 已选项卡片容器(FlowBox chips)
+    sel_flow: FlowBox,
+    /// 已选项卡片展开/收起(内联在列表与底部栏之间,向上展开)
+    sel_revealer: gtk::Revealer,
     select_all_btn: Button,
     batch_btn: Button,
     page: usize,
@@ -49,8 +56,8 @@ pub struct PkgListPage {
     query: String,
     /// 当前过滤后的数据(快照索引)
     filtered: Vec<usize>,
-    /// 完整快照
-    snapshot: Vec<PkgInfo>,
+    /// 完整快照(三个列表页共享同一份,免 69k 条目 ×3 深拷贝)
+    snapshot: Arc<Vec<PkgInfo>>,
     /// row -> 快照索引 映射
     row_map: HashMap<Widget, usize>,
     /// 多选回调(批量操作)
@@ -167,6 +174,38 @@ impl PkgListPage {
         scrolled.set_vexpand(true);
         root.append(&scrolled);
 
+        // ---- 已选条目卡片区:内联在列表与底部栏之间,点击左下角按钮向上展开 ----
+        // (Popover 在底部按钮处向下弹出会被窗口截断,GTK4 无翻转 API,故用 Revealer)
+        let sel_flow = FlowBox::new();
+        sel_flow.set_selection_mode(gtk::SelectionMode::None);
+        sel_flow.set_min_children_per_line(1);
+        sel_flow.set_max_children_per_line(8);
+        sel_flow.set_column_spacing(6);
+        sel_flow.set_row_spacing(6);
+        sel_flow.set_homogeneous(false);
+        sel_flow.set_margin_top(8);
+        sel_flow.set_margin_bottom(8);
+        sel_flow.set_margin_start(12);
+        sel_flow.set_margin_end(12);
+
+        let sel_scroll = ScrolledWindow::new();
+        sel_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        sel_scroll.set_child(Some(&sel_flow));
+        sel_scroll.set_max_content_height(200);
+        sel_scroll.set_propagate_natural_height(true);
+
+        let sel_card = Box::new(Orientation::Vertical, 0);
+        sel_card.add_css_class("sel-pop");
+        sel_card.set_margin_top(6);
+        sel_card.append(&sel_scroll);
+
+        let sel_revealer = gtk::Revealer::new();
+        sel_revealer.set_transition_type(gtk::RevealerTransitionType::SlideUp);
+        sel_revealer.set_transition_duration(180);
+        sel_revealer.set_reveal_child(false);
+        sel_revealer.set_child(Some(&sel_card));
+        root.append(&sel_revealer);
+
         // ---- 底部:统一操作栏(共N个/已选N项 左,全选/批量/分页 右)----
         let bottom = Box::new(Orientation::Horizontal, 8);
         bottom.add_css_class("pager");
@@ -183,8 +222,16 @@ impl PkgListPage {
         batch_count.set_halign(Align::Start);
         batch_count.set_visible(false);
 
+        // 左下角:查看已选条目卡片(点击弹出)
+        let selected_btn = Button::new();
+        selected_btn.set_icon_name("view-list-symbolic");
+        selected_btn.add_css_class("ghost-btn");
+        selected_btn.set_visible(false);
+        selected_btn.set_tooltip_text(Some(i18n::t("selected_items")));
+
         bottom.append(&total_label);
         bottom.append(&batch_count);
+        bottom.append(&selected_btn);
 
         // 弹性空间:左侧内容靠左,右侧控件靠右
         let spacer = Box::new(Orientation::Horizontal, 0);
@@ -227,6 +274,9 @@ impl PkgListPage {
             next_btn: next_btn.clone(),
             multi_btn: multi_btn.clone(),
             batch_count,
+            selected_btn: selected_btn.clone(),
+            sel_flow: sel_flow.clone(),
+            sel_revealer,
             select_all_btn: select_all_btn.clone(),
             batch_btn: batch_btn.clone(),
             page: 0,
@@ -234,7 +284,7 @@ impl PkgListPage {
             mode,
             query: String::new(),
             filtered: Vec::new(),
-            snapshot: Vec::new(),
+            snapshot: Arc::new(Vec::new()),
             row_map: HashMap::new(),
             on_batch,
             multi_select: false,
@@ -328,6 +378,17 @@ impl PkgListPage {
             p.update_batch_ui();
         });
 
+        // 左下角小按钮:展开/收起已选项卡片,展开时按当前选中重建
+        let p = page.clone();
+        selected_btn.connect_clicked(move |_| {
+            let p = p.borrow_mut();
+            let open = !p.sel_revealer.reveals_child();
+            if open {
+                p.rebuild_selected_chips();
+            }
+            p.sel_revealer.set_reveal_child(open);
+        });
+
         // 多选按钮:切换多选模式
         let p = page.clone();
         multi_btn.connect_clicked(move |_| {
@@ -391,7 +452,7 @@ impl PkgListPage {
         page
     }
 
-    pub fn set_snapshot(&mut self, snapshot: Vec<PkgInfo>) {
+    pub fn set_snapshot(&mut self, snapshot: Arc<Vec<PkgInfo>>) {
         self.snapshot = snapshot;
         self.page = 0;
         if self.multi_select {
@@ -427,7 +488,7 @@ impl PkgListPage {
                     }
                 }
             }
-            if !q.is_empty() && !p.name.to_lowercase().contains(&q) {
+            if !q.is_empty() && !contains_ci(&p.name, &q) {
                 continue;
             }
             self.filtered.push(i);
@@ -464,6 +525,10 @@ impl PkgListPage {
         });
         // 只切换多选控件可见性;分页组(底部最右)始终可见
         self.batch_count.set_visible(on);
+        if !on {
+            self.selected_btn.set_visible(false);
+            self.sel_revealer.set_reveal_child(false);
+        }
         self.select_all_btn.set_visible(on);
         self.batch_btn.set_visible(on);
         self.multi_btn
@@ -483,6 +548,47 @@ impl PkgListPage {
         } else {
             i18n::t("multi_select_all")
         });
+        // 左下角"查看已选项"按钮:多选且有选中时才出现
+        if n == 0 {
+            self.sel_revealer.set_reveal_child(false);
+        } else if self.sel_revealer.reveals_child() {
+            // 展开期间选中变化(翻页/全选)同步刷新卡片
+            self.rebuild_selected_chips();
+        }
+        self.selected_btn
+            .set_visible(self.multi_select && n > 0);
+        if n > 0 {
+            self.selected_btn.set_tooltip_text(Some(
+                &i18n::t("multi_count").replace("{n}", &n.to_string()),
+            ));
+        }
+    }
+
+    /// 重建已选条目卡片内容(按快照顺序,便于核对)。
+    /// 上限 300 项:全选数千包时一次性建几千个 Label 会卡顿,超出部分汇总显示。
+    fn rebuild_selected_chips(&self) {
+        const MAX_CHIPS: usize = 300;
+        while let Some(child) = self.sel_flow.first_child() {
+            self.sel_flow.remove(&child);
+        }
+        let mut idx: Vec<usize> = self.selected.iter().copied().collect();
+        idx.sort_unstable();
+        let total = idx.len();
+        for i in idx.into_iter().take(MAX_CHIPS) {
+            let Some(p) = self.snapshot.get(i) else { continue };
+            let chip = Label::new(Some(&p.name));
+            chip.add_css_class("sel-chip");
+            chip.set_xalign(0.0);
+            self.sel_flow.insert(&chip, -1);
+        }
+        if total > MAX_CHIPS {
+            let more = Label::new(Some(
+                &i18n::t("multi_count").replace("{n}", &total.to_string()),
+            ));
+            more.add_css_class("sel-chip");
+            more.set_xalign(0.0);
+            self.sel_flow.insert(&more, -1);
+        }
     }
 
     /// 收集选中且可操作的包名(排序保证命令稳定)
@@ -561,7 +667,7 @@ impl PkgListPage {
     }
 }
 
-/// 构建一行:名称 + 摘要 + 版本 + 状态徽章
+/// 构建一行:图标 + 名称 + 摘要 + 版本 + 状态徽章
 fn build_row(mode: Mode, p: &PkgInfo) -> ListBoxRow {
     let row = ListBoxRow::new();
     row.set_activatable(true);
@@ -572,6 +678,14 @@ fn build_row(mode: Mode, p: &PkgInfo) -> ListBoxRow {
     hbox.set_margin_bottom(8);
     hbox.set_margin_start(12);
     hbox.set_margin_end(12);
+
+    // 应用图标:已安装/可更新条目对应的包有本地 desktop 文件时才显示
+    if mode != Mode::All {
+        if let Some(img) = crate::icons::image_for(&p.icon, 28) {
+            img.set_valign(Align::Center);
+            hbox.append(&img);
+        }
+    }
 
     // 左侧:名称 + 摘要
     let vbox = Box::new(Orientation::Vertical, 2);
@@ -611,6 +725,17 @@ fn build_row(mode: Mode, p: &PkgInfo) -> ListBoxRow {
     hbox.append(&badge_label);
 
     row.set_child(Some(&hbox));
-    let _ = mode;
     row
+}
+
+/// ASCII 忽略大小写的子串匹配。
+/// 包名全是 ASCII:替代对 69k 条目逐个 `to_lowercase()`(每次搜索分配 69k 个 String)。
+fn contains_ci(hay: &str, needle_lower: &str) -> bool {
+    let hay = hay.as_bytes();
+    let needle = needle_lower.as_bytes();
+    if needle.is_empty() || hay.len() < needle.len() {
+        return false;
+    }
+    hay.windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle))
 }

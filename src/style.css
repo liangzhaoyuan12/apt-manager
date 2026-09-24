@@ -449,6 +449,24 @@ button.ghost-btn:hover {
   line-height: 1.6;
 }
 
+/* 多选:已选条目卡片(popover) */
+.sel-pop {
+  background: var(--pager-bg);
+  border: 1px solid var(--pager-border);
+  border-radius: 12px;
+  margin: 0 12px 6px;
+  box-shadow: 0 4px 16px var(--detail-card-shadow);
+}
+.sel-chip {
+  background: var(--nav-checked-bg);
+  color: var(--nav-checked-text);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: "JetBrains Mono", "Noto Sans Mono CJK SC", monospace;
+}
+
 /* 加载提示 */
 .loading-box spinner {
   color: var(--search-focus-border);
