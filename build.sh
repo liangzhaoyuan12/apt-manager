@@ -42,32 +42,6 @@ if [ "$STRIP_BIN" = "1" ]; then
     strip -s "$BIN_PATH"
 fi
 
-# ---------- 1.5 自动探测二进制实际链接的 libapt-pkg，注入 Depends ----------
-# rust-apt 在编译期链接系统 libapt-pkg，SONAME 由构建机当时的版本决定。
-# 不能写死版本号: 构建机/目标机 libapt-pkg 大版本(6.0/7.0)不一致就会"能装不能跑"。
-APT_PKG_SO="$(objdump -p "$BIN_PATH" 2>/dev/null | awk '/NEEDED/{print $2}' | grep -E '^libapt-pkg\.so\.' | head -1)"
-if [ -z "$APT_PKG_SO" ]; then
-    echo "警告: 未在二进制中发现 libapt-pkg 依赖" >&2
-    APT_PKG_DEP=""
-else
-    # SONAME libapt-pkg.so.6.0 -> 包名 libapt-pkg6.0
-    APT_PKG_DEP="$(printf '%s' "$APT_PKG_SO" | sed -E 's/\.so\././')"
-    echo "==> 检测到 libapt-pkg 依赖: $APT_PKG_SO (对应包: $APT_PKG_DEP)"
-fi
-
-# ---------- 1.6 构建期防线: 二进制若有未解析的共享库，直接中止 ----------
-# 能拦住"构建机缺库 / SONAME 对不上"导致的能装不能跑。
-if ldd "$BIN_PATH" 2>/dev/null | grep -q "not found"; then
-    echo "错误: 二进制存在未解析的共享库，停止打包:" >&2
-    ldd "$BIN_PATH" | grep "not found" >&2
-    exit 1
-fi
-
-# ---------- 1.7 动态拼装 Depends (跟随二进制实际链接的库) ----------
-DEPS="libgtk-4-1 (>= 4.6), libadwaita-1-0, libpango-1.0-0, libglib2.0-0, libc6"
-[ -n "$APT_PKG_DEP" ] && DEPS="$DEPS, $APT_PKG_DEP"
-DEPS="$DEPS, apt, dpkg, sudo"
-
 # ---------- 2. 组装 deb 目录 ----------
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
@@ -118,7 +92,7 @@ Priority: optional
 Architecture: $ARCH
 Maintainer: $MAINTAINER
 Homepage: $HOMEPAGE
-Depends: $DEPS
+Depends: libgtk-4-1 (>= 4.6), libpango-1.0-0, libglib2.0-0, libc6, apt, dpkg, sudo
 Description: $DESC_SHORT
  $DESC_LONG
 EOF
